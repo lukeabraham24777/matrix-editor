@@ -345,7 +345,7 @@
     const head = el('div', { class: 'head' },
       el('span', { class: 'grip', title: 'Drag to move · drop on another matrix to swap places' }, '⠿'),
       el('span', { class: 'sel-badge' }),
-      el('input', { class: 'name', value: it.name, 'data-k': 'name', spellcheck: 'false', autocomplete: 'off', size: Math.max(1, it.name.length), title: 'Rename' }),
+      el('input', { class: 'name', value: it.name, 'data-k': 'name', spellcheck: 'false', autocomplete: 'off', size: Math.max(1, it.name.length), title: 'Double-click to rename' }),
       el('span', { class: 'dims' }, `${m}×${n}`),
       it.caption ? el('span', { class: 'caption', title: it.caption }, it.caption) : null,
       el('span', { class: 'spacer' }),
@@ -407,8 +407,11 @@
   function wireCardCommon(card, it, head) {
     head.addEventListener('pointerdown', (ev) => {
       if (ev.button > 0 || ev.target.closest('button') || (ev.target.classList.contains('name') && document.activeElement === ev.target)) return;
+      if (ev.target.classList.contains('name')) ev.preventDefault(); // single click selects; double-click renames
       startCardDrag(ev, it, card);
     });
+    const nm = head.querySelector('input.name');
+    if (nm) nm.addEventListener('dblclick', () => { nm.focus(); nm.select(); });
     head.querySelector('.more').addEventListener('click', (ev) => { ev.stopPropagation(); Ed.emit('more', it, ev.currentTarget); });
     card.addEventListener('pointerdown', (ev) => {
       if (ev.target.closest('.head')) return;
@@ -580,8 +583,8 @@
       clearTimeout(lp);
       moving.forEach((m) => Ed.els.get(m.id)?.classList.remove('dragging'));
       if (!moved) {
-        if (isName) { ev.target.focus(); ev.target.select(); }
-        else if (wasSelected && additive) Ed.select(it.id, 'toggle');
+        if (isName && document.activeElement && document.activeElement !== document.body && document.activeElement !== ev.target) document.activeElement.blur();
+        if (wasSelected && additive) Ed.select(it.id, 'toggle');
         else if (!additive) Ed.select(it.id);
         return;
       }
