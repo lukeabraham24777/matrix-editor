@@ -28,7 +28,7 @@
     clearTimeout(typingTimer); typingTimer = null;
     const s = Ed.snapshot();
     if (s === lastSnap) return;
-    if (lastSnap) { Ed.undoStack.push(lastSnap); if (Ed.undoStack.length > 200) Ed.undoStack.shift(); }
+    if (lastSnap) { Ed.undoStack.push(lastSnap); if (Ed.undoStack.length > 100) Ed.undoStack.shift(); }
     Ed.redoStack = [];
     lastSnap = s;
     Ed.save();
@@ -235,6 +235,9 @@
     Ed.stage = stage; Ed.world = world;
     setupStage();
   };
+  let viewRaf = 0;
+  /** Coalesce view changes (pan / zoom / pinch) into one update per frame. */
+  Ed.requestView = function () { if (!viewRaf) viewRaf = requestAnimationFrame(() => { viewRaf = 0; Ed.applyView(); }); };
   Ed.applyView = function () {
     const { x, y, z } = Ed.state.view;
     Ed.world.style.transform = `translate(${x}px, ${y}px) scale(${z})`;
@@ -250,7 +253,7 @@
     const nz = Math.min(2.5, Math.max(0.25, v.z * factor));
     const px = cx - r.left, py = cy - r.top;
     v.x = px - ((px - v.x) * nz) / v.z; v.y = py - ((py - v.y) * nz) / v.z; v.z = nz;
-    Ed.applyView();
+    Ed.requestView();
   };
   Ed.viewCenter = function () { const r = Ed.stage.getBoundingClientRect(); return Ed.toWorld(r.left + r.width / 2, r.top + r.height / 2.6); };
   Ed.itemRect = (it) => { const e = Ed.els.get(it.id); return { x: it.x, y: it.y, w: e ? e.offsetWidth : 120, h: e ? e.offsetHeight : 80 }; };
@@ -800,7 +803,7 @@
         const nz = Math.min(2.5, Math.max(0.25, pinch.z * d / pinch.d));
         const px = pinch.cx - r.left, py = pinch.cy - r.top;
         Ed.state.view = { z: nz, x: px - ((px - pinch.vx) * nz) / pinch.z + (cx - pinch.cx), y: py - ((py - pinch.vy) * nz) / pinch.z + (cy - pinch.cy) };
-        Ed.applyView();
+        Ed.requestView();
         return;
       }
       if (!pan) return;
@@ -813,7 +816,7 @@
       }
       if (Math.hypot(ev.clientX - pan.sx, ev.clientY - pan.sy) > 4) pan.moved = true;
       Ed.state.view.x = pan.vx + ev.clientX - pan.sx; Ed.state.view.y = pan.vy + ev.clientY - pan.sy;
-      Ed.applyView();
+      Ed.requestView();
       stage.classList.add('panning');
     });
     const end = (ev) => {
@@ -847,7 +850,7 @@
       if (ev.target.closest && ev.target.closest('.note-body')) return;
       ev.preventDefault();
       if (ev.ctrlKey || ev.metaKey) Ed.zoomAt(ev.clientX, ev.clientY, Math.exp(-ev.deltaY * 0.01));
-      else { Ed.state.view.x -= ev.deltaX; Ed.state.view.y -= ev.deltaY; Ed.applyView(); }
+      else { Ed.state.view.x -= ev.deltaX; Ed.state.view.y -= ev.deltaY; Ed.requestView(); }
     }, { passive: false });
     stage.addEventListener('pointermove', (ev) => { Ed.lastPointerWorld = Ed.toWorld(ev.clientX, ev.clientY); });
     // Safari pinch gestures

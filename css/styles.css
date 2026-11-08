@@ -253,7 +253,7 @@ body.ex-open .selbar { left: 12px; transform: none; max-width: calc(100% - 150px
 .modal-card { background: var(--panel); border-radius: 16px; box-shadow: var(--shadow); width: min(640px, 100%); max-height: calc(100vh - 32px); overflow: auto; padding: 16px 20px 20px; }
 .modal-head { display: flex; align-items: center; gap: 8px; }
 .modal-head h3 { flex: 1; margin: 0; font-family: var(--script); font-size: 30px; }
-.modal-actions { margin-top: 10px; display: flex; justify-content: flex-end; }
+.modal-actions { margin-top: 10px; display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
 .help section { margin-top: 12px; }
 .help h4 { margin: 0 0 4px; font-family: var(--hand); color: var(--pen); }
 .help dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0; font-size: 14px; }

@@ -126,7 +126,7 @@
     const ta = el('textarea', { rows: 3, placeholder: 'or paste: 1 2; 3 4 · [[1,2],[3,4]] · LaTeX · spreadsheet cells', spellcheck: 'false', autocapitalize: 'off' });
     box.append(el('div', { class: 'pop-title' }, el('b', null, 'New matrix')), lbl, grid,
       el('div', { class: 'pop-line' }, mi, el('span', null, '×'), ni, el('button', { class: 'tb small primary', onclick: () => create(Math.max(1, Math.min(30, +mi.value || 1)), Math.max(1, Math.min(30, +ni.value || 1))) }, 'Create')),
-      el('div', { class: 'pop-line' }, el('button', { class: 'tb small accent', style: { flex: 1 }, onclick: () => App.pickImage(worldPos) }, '📷  From a screenshot or photo…')),
+      el('div', { class: 'pop-line' }, el('button', { class: 'tb small accent', style: { flex: 1 }, onclick: () => App.pickImage(worldPos) }, '📷  Screenshot / photo…'), el('button', { class: 'tb small', style: { flex: 1 }, onclick: () => { Ed.closePopover(); App.readClipboard(worldPos); } }, '📋  From clipboard')),
       el('div', { class: 'pop-line col' }, ta, el('button', { class: 'tb small', onclick: () => { const P = M.parseText(ta.value); if (!P) return Ed.toast('Could not read a matrix from that text', true); create(P.length, P[0].length, P); } }, 'Create from text')),
       el('div', { class: 'pop-line' }, el('span', { class: 'muted' }, 'Quick:'),
         el('button', { class: 'tb small', onclick: () => create(3, 3, M.toStrings(M.identity(3))) }, 'I₃'),
@@ -243,21 +243,26 @@
   function pasteText(text, at) {
     if (clip && text && text.trim() === clip.text.trim()) { pasteItems(clip.items, at); return; }
     const P = M.parseText(text);
-    if (!P) { Ed.toast('Clipboard does not contain a matrix', true); return; }
+    if (!P) { Ed.toast(String(text || '').trim() ? 'Could not find numbers in the pasted text' : 'Nothing to paste — copy a matrix or a screenshot of one first', true); return; }
     const pos = at || Ed.freeSpot(null, P[0].length * 50, P.length * 36);
     const it = Ed.addMatrix({ cells: P, x: Math.round(pos.x), y: Math.round(pos.y) });
     Ed.select(it.id); Ed.commit(); flash(it);
     Ed.toast(`Pasted ${P.length}×${P[0].length} matrix as ${it.name}`);
   }
   function pasteModal() {
-    const ta = el('textarea', { rows: 6, placeholder: 'Paste a matrix here:\n1 2 3\n4 5 6\n\nAlso accepts [[1,2],[3,4]], [1 2; 3 4], LaTeX, or cells copied from a spreadsheet.', spellcheck: 'false', autocapitalize: 'off' });
-    openModal('Paste a matrix', el('div', null, ta, el('div', { class: 'modal-actions' }, el('button', { class: 'tb primary', onclick: () => { closeModal(); pasteText(ta.value); } }, 'Create matrix'))));
+    const ta = el('textarea', { rows: 6, placeholder: 'Paste a matrix or a screenshot of one here:\n1 2 3\n4 5 6\n\nAlso accepts [[1,2],[3,4]], [1 2; 3 4], LaTeX, or cells copied from a spreadsheet.', spellcheck: 'false', autocapitalize: 'off' });
+    openModal('Paste a matrix', el('div', null, ta, el('div', { class: 'modal-actions' },
+      el('button', { class: 'tb', onclick: () => { closeModal(); App.readClipboard(); } }, '📋 Paste from clipboard'),
+      el('button', { class: 'tb', onclick: () => { closeModal(); App.pickImage(); } }, '📷 Image…'),
+      el('button', { class: 'tb primary', onclick: () => { closeModal(); pasteText(ta.value); } }, 'Create matrix'))));
     setTimeout(() => ta.focus(), 50);
   }
 
   /* ---------- matrix from screenshot / photo ---------- */
   App.importImage = function (file, at) {
+    if (file && typeof file.then === 'function') { file.then((b) => App.importImage(b, at), (e) => Ed.toast(e.message, true)); return; }
     if (!file || !/^image\//.test(file.type)) { Ed.toast('That is not an image', true); return; }
+    closeModal();
     Ed.closePopover();
     const status = el('div', { class: 'ocr-status' }, 'Reading the image…');
     const bar = el('div', { class: 'ocr-bar' }, el('div'));
@@ -314,6 +319,43 @@
       ta.focus();
     });
   };
+  /** Find an image in a clipboard / drag DataTransfer. Returns a File/Blob, a Promise of one, or null. */
+  App.imageFromTransfer = function (dt) {
+    if (!dt) return null;
+    const f = [...(dt.files || [])].find((x) => /^image\//.test(x.type));
+    if (f) return f;
+    const it = [...(dt.items || [])].find((i) => i.kind === 'file' && /^image\//.test(i.type));
+    if (it) return it.getAsFile();
+    // images copied from web pages / docs often arrive only as HTML: <img src="...">
+    const html = dt.getData && dt.getData('text/html');
+    const m = html && /<img[^>]+src=["']([^"']+)["']/i.exec(html);
+    if (m) {
+      const src = m[1].replace(/&amp;/g, '&');
+      return fetch(src).then((r) => { if (!r.ok) throw new Error(); return r.blob(); })
+        .then((b) => { if (!/^image\//.test(b.type)) throw new Error(); return b; })
+        .catch(() => { throw new Error('That image is on another website and can’t be read directly. Save it (or take a screenshot of it) and paste or drop that instead.'); });
+    }
+    return null;
+  };
+  /** Read the system clipboard on demand (works on phones via the browser's Paste prompt). */
+  App.readClipboard = async function (at) {
+    try {
+      if (navigator.clipboard && navigator.clipboard.read) {
+        const items = await navigator.clipboard.read();
+        for (const item of items) {
+          const type = item.types.find((t) => /^image\//.test(t));
+          if (type) { App.importImage(new File([await item.getType(type)], 'clipboard', { type }), at); return; }
+        }
+        for (const item of items) if (item.types.includes('text/plain')) { pasteText(await (await item.getType('text/plain')).text(), at); return; }
+        Ed.toast('The clipboard is empty', true);
+        return;
+      }
+      if (navigator.clipboard && navigator.clipboard.readText) { pasteText(await navigator.clipboard.readText(), at); return; }
+      throw new Error('unsupported');
+    } catch (e) {
+      Ed.toast('The browser blocked clipboard access — press Ctrl/⌘+V on the paper instead, or use “From a screenshot or photo”.', true);
+    }
+  };
   App.pickImage = function (at) {
     const inp = el('input', { type: 'file', accept: 'image/*' });
     inp.onchange = () => { if (inp.files[0]) App.importImage(inp.files[0], at); };
@@ -365,7 +407,11 @@
     m.append(card); m.hidden = false;
     m.onclick = (e) => { if (e.target === m) closeModal(); };
   }
-  function closeModal() { $('modal').hidden = true; }
+  function closeModal() {
+    const m = $('modal');
+    m.querySelectorAll('img[src^="blob:"]').forEach((i) => URL.revokeObjectURL(i.src));
+    m.hidden = true; m.innerHTML = '';
+  }
   App.help = function () {
     const sec = (t, rows) => el('section', null, el('h4', null, t), el('dl', null, rows.map(([k, v]) => [el('dt', null, k), el('dd', null, v)])));
     openModal('How to use the scratchpad', el('div', { class: 'help' },
@@ -400,6 +446,7 @@
     const sep = (t) => box.append(el('div', { class: 'msep' }, t || ''));
     item('📋  Paste matrix from text…', pasteModal);
     item('📷  Matrix from screenshot / photo…', () => App.pickImage());
+    item('📋  Matrix from clipboard (image or text)', () => App.readClipboard());
     item('⤢  Fit everything in view', Ed.fit);
     sep('Display');
     item((MX.settings.display === 'frac' ? '● ' : '○ ') + 'Fractions', () => setDisplay('frac'));
@@ -532,8 +579,9 @@
       e.clipboardData.setData('text/plain', t); e.preventDefault(); Ed.remove(Ed.sel.slice()); Ed.commit();
     });
     document.addEventListener('paste', (e) => {
-      const imgItem = [...(e.clipboardData.items || [])].find((i) => i.kind === 'file' && /^image\//.test(i.type));
-      if (imgItem && $('modal').hidden) { e.preventDefault(); App.importImage(imgItem.getAsFile(), Ed.lastPointerWorld && insideStage() ? Ed.lastPointerWorld : null); return; }
+      if (e.target.closest && e.target.closest('.ocr')) return; // editing the recognised numbers
+      const img = App.imageFromTransfer(e.clipboardData);
+      if (img) { e.preventDefault(); App.importImage(img, Ed.lastPointerWorld && insideStage() ? Ed.lastPointerWorld : null); return; }
       if (typing(e.target)) return;
       e.preventDefault();
       pasteText(e.clipboardData.getData('text/plain'), Ed.lastPointerWorld && insideStage() ? Ed.lastPointerWorld : null);
@@ -544,7 +592,7 @@
     stageEl.addEventListener('dragleave', () => stageEl.classList.remove('drop-on'));
     stageEl.addEventListener('drop', (e) => {
       stageEl.classList.remove('drop-on');
-      const f = [...e.dataTransfer.files].find((x) => /^image\//.test(x.type));
+      const f = App.imageFromTransfer(e.dataTransfer);
       if (f) { e.preventDefault(); App.importImage(f, Ed.toWorld(e.clientX, e.clientY)); return; }
       const t = e.dataTransfer.getData('text/plain');
       if (t) { e.preventDefault(); pasteText(t, Ed.toWorld(e.clientX, e.clientY)); }

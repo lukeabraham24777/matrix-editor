@@ -162,15 +162,22 @@
     }
     return workerP;
   }
+  // The OCR engine holds ~100 MB+ of WebAssembly memory: shut it down after a minute of no use.
+  let idleTimer = null;
+  function scheduleIdle() {
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(async () => { const p = workerP; workerP = null; if (p) { try { (await p).terminate(); } catch (e) { /* ignore */ } } }, 60000);
+  }
+  OCR.release = () => { clearTimeout(idleTimer); const p = workerP; workerP = null; if (p) p.then((w) => w.terminate()).catch(() => {}); };
   function loadImage(src) {
     return new Promise((res, rej) => { const img = new Image(); img.onload = () => res(img); img.onerror = () => rej(new Error('Could not read that image')); img.src = src; });
   }
   /** Render just the blobs of one number into a fresh, padded canvas. */
-  function cropNumber(pre, num, H) {
+  function cropNumber(pre, num, H, target = 44) {
     const pad = Math.round(H * 0.45);
     const x0 = num.x0, y0 = Math.min(num.y0, num.comps.reduce((m, k) => Math.min(m, k.y0), Infinity));
     const w = num.x1 - x0 + 1, h = num.y1 - y0 + 1;
-    const sc = Math.max(0.5, Math.min(3, 52 / H));
+    const sc = Math.max(0.1, Math.min(3, target / H));
     const ids = new Set(num.comps.map((k) => k.id));
     const src = document.createElement('canvas'); src.width = w + 2 * pad; src.height = h + 2 * pad;
     const g = src.getContext('2d'); const im = g.createImageData(src.width, src.height); im.data.fill(255);
@@ -191,17 +198,24 @@
     const pre = OCR.preprocess(img);
     const { H, rows } = OCR.layout(pre.comps);
     if (!rows.length) throw new Error('No numbers found in the image');
+    clearTimeout(idleTimer);
     const worker = await getWorker();
     progressCb = null;
     const total = rows.reduce((s2, r) => s2 + r.length, 0); let done = 0;
     for (const r of rows) for (const num of r) {
-      const crop = cropNumber(pre, num, H);
-      let t = OCR.cleanToken((await worker.recognize(crop)).data.text);
-      if (!t) { await worker.setParameters({ tessedit_pageseg_mode: '10' }); t = OCR.cleanToken((await worker.recognize(crop)).data.text); await worker.setParameters({ tessedit_pageseg_mode: '7' }); }
+      // try a few text sizes / segmentation modes until something is read
+      let t = '';
+      for (const [size, psm] of [[44, '7'], [30, '7'], [64, '7'], [44, '10'], [30, '8']]) {
+        if (psm !== '7') await worker.setParameters({ tessedit_pageseg_mode: psm });
+        t = OCR.cleanToken((await worker.recognize(cropNumber(pre, num, H, size))).data.text);
+        if (psm !== '7') await worker.setParameters({ tessedit_pageseg_mode: '7' });
+        if (t) break;
+      }
       if (!t && num.comps.length === 1) { const k = num.comps[0]; if (k.y1 - k.y0 + 1 >= (k.x1 - k.x0 + 1) * 1.8) t = '1'; } // a lone narrow stroke is a 1
       num.t = t ? (num.neg ? '-' : '') + t : '';
       done++; if (onProgress) onProgress({ status: 'recognizing text', progress: done / total });
     }
+    scheduleIdle();
     const grid = OCR.align(rows.map((r) => r.map((n) => ({ t: n.t, cx: n.cx }))));
     return { rows: grid, url };
   };
