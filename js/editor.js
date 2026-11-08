@@ -289,10 +289,13 @@
   };
 
   /* ---------- selection ---------- */
+  /** Items grouped with `id` (Ctrl+G) select together. */
+  Ed.groupOf = (id) => { const it = Ed.get(id); return it && it.group ? Ed.state.items.filter((o) => o.group === it.group).map((o) => o.id) : [id]; };
   Ed.select = function (id, mode) {
-    if (mode === 'toggle') { Ed.sel = Ed.sel.includes(id) ? Ed.sel.filter((x) => x !== id) : Ed.sel.concat(id); }
-    else if (mode === 'add') { if (!Ed.sel.includes(id)) Ed.sel = Ed.sel.concat(id); }
-    else Ed.sel = id ? [id] : [];
+    const ids = id ? Ed.groupOf(id) : [];
+    if (mode === 'toggle') { Ed.sel = Ed.sel.includes(id) ? Ed.sel.filter((x) => !ids.includes(x)) : Ed.sel.concat(ids.filter((x) => !Ed.sel.includes(x))); }
+    else if (mode === 'add') { Ed.sel = Ed.sel.concat(ids.filter((x) => !Ed.sel.includes(x))); }
+    else Ed.sel = ids;
     syncSelection();
   };
   Ed.clearSelection = () => { Ed.sel = []; syncSelection(); };
@@ -312,7 +315,7 @@
     const active = document.activeElement;
     let focusKey = null, caret = null;
     if (old && old.contains(active) && active.dataset && active.dataset.k) { focusKey = active.dataset.k; caret = active.selectionStart; }
-    const e = it.kind === 'matrix' ? buildMatrix(it) : buildNote(it);
+    const e = it.kind === 'matrix' ? buildMatrix(it) : it.kind === 'note' ? buildNote(it) : MX.Draw.build(it);
     e.style.left = it.x + 'px'; e.style.top = it.y + 'px';
     e.classList.toggle('selected', Ed.sel.includes(it.id));
     if (old) old.replaceWith(e); else Ed.world.append(e);
@@ -545,6 +548,7 @@
     window.addEventListener('pointercancel', up);
   }
 
+  Ed.startDrag = (ev, it, e) => startCardDrag(ev, it, e);
   function startCardDrag(ev, it, card) {
     const sx = ev.clientX, sy = ev.clientY, z = Ed.state.view.z;
     const additive = ev.shiftKey || ev.metaKey || ev.ctrlKey;
@@ -554,20 +558,21 @@
     const start = moving.map((m) => ({ m, x: m.x, y: m.y }));
     let moved = false, target = null;
     const lp = setTimeout(() => { if (!moved && ev.pointerType !== 'mouse') { moved = 'lp'; Ed.select(it.id, 'toggle'); if (navigator.vibrate) navigator.vibrate(15); } }, 480);
-    const isName = ev.target.classList.contains('name');
+    const isName = ev.target.classList && ev.target.classList.contains('name');
     track(ev, (e) => {
       const dx = (e.clientX - sx) / z, dy = (e.clientY - sy) / z;
       if (!moved && Math.hypot(e.clientX - sx, e.clientY - sy) < 5) return;
       if (moved === 'lp') return;
-      if (!moved) { moved = true; clearTimeout(lp); if (isName) ev.target.blur(); moving.forEach((m) => Ed.els.get(m.id).classList.add('dragging')); }
+      if (!moved) { moved = true; clearTimeout(lp); if (isName) ev.target.blur(); moving.forEach((m) => { const e3 = Ed.els.get(m.id); if (e3) e3.classList.add('dragging'); }); }
       start.forEach((s) => { s.m.x = Math.round(s.x + dx); s.m.y = Math.round(s.y + dy); const e2 = Ed.els.get(s.m.id); e2.style.left = s.m.x + 'px'; e2.style.top = s.m.y + 'px'; });
-      // swap target
+      Ed.emit('moved');
+      // swap target (matrix dropped on matrix)
       let t = null;
-      if (moving.length === 1) {
+      if (moving.length === 1 && it.kind === 'matrix') {
         card.style.pointerEvents = 'none';
         const under = document.elementFromPoint(e.clientX, e.clientY);
         card.style.pointerEvents = '';
-        const c = under && under.closest('.card');
+        const c = under && under.closest('.card.mat');
         if (c && c !== card) t = Ed.get(c.dataset.id);
       }
       if (target !== t) { if (target) Ed.els.get(target.id)?.classList.remove('swap-target'); target = t; if (target) Ed.els.get(target.id).classList.add('swap-target'); }
@@ -588,7 +593,7 @@
         [it, target].forEach((m) => { const e2 = Ed.els.get(m.id); e2.classList.add('animate'); e2.style.left = m.x + 'px'; e2.style.top = m.y + 'px'; setTimeout(() => e2.classList.remove('animate'), 300); });
         Ed.toast(`Swapped ${it.name || 'item'} and ${target.name || 'item'}`);
       }
-      Ed.commit();
+      Ed.commit(); Ed.emit('moved');
     });
   }
 
@@ -785,9 +790,9 @@
         pan = null;
         return;
       }
-      if (ev.shiftKey && ev.pointerType === 'mouse') {
+      if (ev.pointerType === 'mouse' && ev.button === 0) {
         const mq = document.getElementById('marquee');
-        pan = { marquee: true, sx: ev.clientX, sy: ev.clientY, mq };
+        pan = { marquee: true, sx: ev.clientX, sy: ev.clientY, mq, add: ev.shiftKey, moved: false };
         return;
       }
       pan = { sx: ev.clientX, sy: ev.clientY, vx: Ed.state.view.x, vy: Ed.state.view.y, moved: false };
@@ -810,6 +815,8 @@
       if (pan.marquee) {
         const x0 = Math.min(pan.sx, ev.clientX), y0 = Math.min(pan.sy, ev.clientY);
         const sr = stage.getBoundingClientRect();
+        if (!pan.moved && Math.hypot(ev.clientX - pan.sx, ev.clientY - pan.sy) < 4) return;
+        pan.moved = true;
         Object.assign(pan.mq.style, { left: x0 - sr.left + 'px', top: y0 - sr.top + 'px', width: Math.abs(ev.clientX - pan.sx) + 'px', height: Math.abs(ev.clientY - pan.sy) + 'px' });
         pan.mq.hidden = false;
         return;
@@ -825,11 +832,14 @@
       stage.classList.remove('panning');
       if (pinch) { if (pointers.size < 2) { pinch = null; pan = null; } return; }
       if (!pan) return;
-      if (pan.marquee) {
+      if (pan.marquee && pan.moved) {
         pan.mq.hidden = true;
         const a = Ed.toWorld(Math.min(pan.sx, ev.clientX), Math.min(pan.sy, ev.clientY));
         const b = Ed.toWorld(Math.max(pan.sx, ev.clientX), Math.max(pan.sy, ev.clientY));
-        Ed.state.items.forEach((it) => { const r = Ed.itemRect(it); if (r.x < b.x && r.x + r.w > a.x && r.y < b.y && r.y + r.h > a.y) Ed.select(it.id, 'add'); });
+        if (!pan.add) Ed.sel = [];
+        // like Excalidraw: select what is fully inside the box
+        Ed.state.items.forEach((it) => { const r = MX.Draw ? MX.Draw.bounds(it) : Ed.itemRect(it); if (r.x >= a.x && r.x + r.w <= b.x && r.y >= a.y && r.y + r.h <= b.y) Ed.select(it.id, 'add'); });
+        syncSelection();
         pan = null; return;
       }
       if (!pan.moved && ev.type === 'pointerup') {

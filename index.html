@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;700&family=Kalam:wght@400;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/styles.css?v=4">
+  <link rel="stylesheet" href="css/styles.css?v=5">
 </head>
 <body>
   <header class="topbar">
@@ -25,11 +25,13 @@
       <button id="btn-note" class="tb" title="New note"><span class="ico">✎</span><span class="lbl">Note</span></button>
       <button id="btn-undo" class="tb icon" title="Undo (Ctrl+Z)">↶</button>
       <button id="btn-redo" class="tb icon" title="Redo (Ctrl+Shift+Z)">↷</button>
-      <button id="btn-explain" class="tb accent" title="Step-by-step explainer (E)"><span class="ico">☰</span><span class="lbl">Explainer</span></button>
+      <button id="btn-explain" class="tb accent" title="Step-by-step explainer (Shift+E)"><span class="ico">☰</span><span class="lbl">Explainer</span></button>
       <button id="btn-menu" class="tb icon" title="More">⋯</button>
     </nav>
   </header>
 
+  <div id="toolbar" class="toolbar" role="toolbar" aria-label="Drawing tools"></div>
+  <aside id="props" class="props" hidden></aside>
   <main id="stage" class="stage">
     <div id="world" class="world"></div>
     <div id="marquee" class="marquee" hidden></div>
@@ -67,14 +69,15 @@
   <div id="popover" class="popover" hidden></div>
   <div id="modal" class="modal" hidden></div>
 
-  <script src="js/fraction.js?v=4"></script>
-  <script src="js/matrix.js?v=4"></script>
-  <script src="js/ops.js?v=4"></script>
-  <script src="js/expr.js?v=4"></script>
-  <script src="js/ocr.js?v=4"></script>
-  <script src="js/render.js?v=4"></script>
-  <script src="js/editor.js?v=4"></script>
-  <script src="js/explainer.js?v=4"></script>
-  <script src="js/app.js?v=4"></script>
+  <script src="js/fraction.js?v=5"></script>
+  <script src="js/matrix.js?v=5"></script>
+  <script src="js/ops.js?v=5"></script>
+  <script src="js/expr.js?v=5"></script>
+  <script src="js/ocr.js?v=5"></script>
+  <script src="js/render.js?v=5"></script>
+  <script src="js/editor.js?v=5"></script>
+  <script src="js/draw.js?v=5"></script>
+  <script src="js/explainer.js?v=5"></script>
+  <script src="js/app.js?v=5"></script>
 </body>
 </html>

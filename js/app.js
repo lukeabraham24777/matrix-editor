@@ -219,12 +219,13 @@
     const items = ids.map((id) => Ed.get(id)).filter(Boolean).map((i) => JSON.parse(JSON.stringify(i)));
     if (!items.length) return null;
     const text = items.length === 1 && items[0].kind === 'matrix' ? items[0].cells.map((r) => r.map((s) => s || '0').join('\t')).join('\n')
-      : items.map((i) => (i.kind === 'matrix' ? `${i.name} =\n` + i.cells.map((r) => r.map((s) => s || '0').join('\t')).join('\n') : i.text)).join('\n\n');
+      : items.map((i) => (i.kind === 'matrix' ? `${i.name} =\n` + i.cells.map((r) => r.map((s) => s || '0').join('\t')).join('\n') : i.text || '')).filter(Boolean).join('\n\n') || `[${items.length} drawing item${items.length > 1 ? 's' : ''}]`;
     clip = { text, items };
     return text;
   }
   function pasteItems(items, at) {
     const x0 = Math.min(...items.map((i) => i.x)), y0 = Math.min(...items.map((i) => i.y));
+    const groups = {}; items.forEach((i) => { if (i.group) groups[i.group] = groups[i.group] || 'g' + Ed.state.seq++; });
     const base = at || { x: x0 + 32, y: y0 + 32 };
     const ids = [];
     items.forEach((src) => {
@@ -233,13 +234,20 @@
       if (src.kind === 'matrix') {
         it = Ed.addMatrix({ cells: src.cells, x: pos.x, y: pos.y, caption: src.caption, name: src.name });
         it.tmpRows = JSON.parse(JSON.stringify(src.tmpRows || [])); it.tmpCols = JSON.parse(JSON.stringify(src.tmpCols || [])); it.log = []; Ed.refresh(it);
-      } else it = Ed.addNote({ text: src.text, x: pos.x, y: pos.y, result: src.result });
+      } else if (src.kind === 'note') it = Ed.addNote({ text: src.text, x: pos.x, y: pos.y, result: src.result });
+      else {
+        it = JSON.parse(JSON.stringify(src)); it.id = 'i' + Ed.state.seq++; it.x = pos.x; it.y = pos.y;
+        if (it.group) it.group = groups[it.group];
+        if (it.seed != null) it.seed = (Math.random() * 2 ** 31) | 0;
+        Ed.state.items.push(it); Ed.renderItem(it);
+      }
       ids.push(it.id);
     });
     Ed.sel = []; ids.forEach((id) => Ed.select(id, 'add'));
     Ed.commit();
   }
   function duplicate(ids) { const t = copyItems(ids); if (t != null) pasteItems(clip.items); }
+  App.duplicate = duplicate;
   function pasteText(text, at) {
     if (clip && text && text.trim() === clip.text.trim()) { pasteItems(clip.items, at); return; }
     const P = M.parseText(text);
@@ -296,7 +304,7 @@
     openModal('Matrix from image', el('div', { class: 'ocr' },
       el('div', { class: 'ocr-top' }, img, el('div', { class: 'ocr-side' }, status, bar, preview)),
       el('label', { class: 'ocr-lbl' }, 'Entries — one row per line (edit freely):'), ta, warn,
-      el('div', { class: 'modal-actions' }, el('button', { class: 'tb', onclick: closeModal }, 'Cancel'), createBtn)));
+      el('div', { class: 'modal-actions' }, el('button', { class: 'tb', onclick: closeModal }, 'Cancel'), el('button', { class: 'tb', title: 'Put the picture itself on the scratchpad instead of reading numbers from it', onclick: () => { closeModal(); MX.Draw.insertImage(file, at); } }, '🖼 Insert as picture'), createBtn)));
     const labels = { 'loading tesseract core': 'Loading the OCR engine', 'initializing tesseract': 'Starting OCR', 'loading language traineddata': 'Loading number recogniser', 'initializing api': 'Starting OCR', 'recognizing text': 'Recognising numbers' };
     MX.OCR.read(file, (m) => {
       status.textContent = (labels[m.status] || m.status) + (m.progress ? ` ${Math.round(m.progress * 100)}%` : '') + '…';
@@ -373,7 +381,8 @@
     const b = (label, title, fn, cls) => el('button', { class: 'sb' + (cls ? ' ' + cls : ''), title, onclick: fn }, label);
     const run = (key, ...ops) => () => App.runOp(key, ops);
     bar.append(el('label', { class: 'mode-toggle', title: 'When on, quick operations open the step-by-step explainer' }, el('input', { type: 'checkbox', checked: stepsMode || null, onchange: (e) => { stepsMode = e.target.checked; syncSelbar(); } }), el('span', null, 'steps')));
-    const names = items.map((i) => i.name || 'note').join(', ');
+    const KIND = { rect: 'rectangle', diamond: 'diamond', ellipse: 'ellipse', arrow: 'arrow', line: 'line', draw: 'drawing' };
+    const names = items.length > 3 ? `${items.length} items` : items.map((i) => i.name || (i.kind === 'shape' ? KIND[i.type] : i.kind)).join(', ');
     bar.append(el('span', { class: 'sb-names' }, names));
     if (mats.length === 1 && items.length === 1) {
       const A = mats[0]; const n = A.name; const o = { id: A.id };
@@ -423,7 +432,7 @@
         ['Paste', 'Paste a block of numbers into any cell to fill (and grow) the matrix, or press Ctrl+V on the paper to create a new one'],
         ['Screenshot', 'Paste a screenshot of a matrix (Ctrl+V), drop an image on the paper, or use + Matrix → From a screenshot or photo. You can check and fix the numbers before it is created'],
         ['Move', 'Drag by the header. Drop it on another matrix to swap their places'],
-        ['Select', 'Click a header; Shift-click (or long-press on touch) to select several; Shift-drag on paper to box-select'],
+        ['Select', 'Click a header; Shift-click (or long-press on touch) to select several; drag on empty paper to box-select'],
       ]),
       sec('Rows & columns', [
         ['Row ops', 'Tap R1, R2… to open the row tool. Type R2 - 3R1, *2, /3, swap R1, = 1 2 3, then Enter'],
@@ -435,10 +444,17 @@
         ['Quick ops', 'Select one or two matrices — the bar at the bottom offers det, inverse, RREF, A·B, solve…'],
         ['All ops', 'ƒ on a matrix lists every operation; "steps" opens the explainer'],
         ['Command bar', 'C = A*B · inv(A) · A^T or A\' · A^-1 · det(A) · rref(A) · solve(A, b) · solveaug(M) · 2A - 3I(3) · [1 2; 3 4] · lu(A) · eig(A)'],
-        ['Explainer', 'Press E. Choose an operation and matrices, then Step by step or Just the answer'],
+        ['Explainer', 'Press Shift+E. Choose an operation and matrices, then Step by step or Just the answer'],
+      ]),
+      sec('Drawing (like Excalidraw)', [
+        ['Tools', 'Toolbar at the top: hand H · select V/1 · rectangle R/2 · diamond D/3 · ellipse O/4 · arrow A/5 · line L/6 · draw P/7 · text T/8 · image 9 · eraser E/0 · lock Q keeps a tool active'],
+        ['Select', 'Drag on empty paper to box-select, Shift-click to add, Ctrl+A for everything, Delete to remove them all'],
+        ['Edit', 'Drag handles to resize, the top handle to rotate (Shift snaps), line ends to move them and the middle dot to bend. Double-click text to edit'],
+        ['Style', 'The panel on the left sets colour, fill, stroke, sloppiness, arrowheads, fonts, opacity, layer order and alignment'],
+        ['Other', 'Ctrl+G group · Ctrl+Shift+G ungroup · Ctrl+] / [ layer order · arrow keys nudge · hold Space (or middle mouse) to pan'],
       ]),
       sec('Keys', [
-        ['Ctrl+Z / Ctrl+Shift+Z', 'Undo / redo'], ['Ctrl+C / X / V / D', 'Copy, cut, paste, duplicate selected'], ['Delete', 'Delete selected'], ['Ctrl+scroll / pinch', 'Zoom'], ['Scroll / drag paper', 'Pan'], ['/', 'Focus the command bar'],
+        ['Ctrl+Z / Ctrl+Shift+Z', 'Undo / redo'], ['Ctrl+C / X / V / D', 'Copy, cut, paste, duplicate selected'], ['Delete', 'Delete selected'], ['Ctrl+scroll / pinch', 'Zoom'], ['Scroll · Space+drag · two fingers', 'Pan'], ['/', 'Focus the command bar'], ['N or M', 'New matrix'], ['Shift+E', 'Explainer'],
       ])));
   };
   function appMenu(anchor) {
@@ -448,6 +464,7 @@
     item('📋  Paste matrix from text…', pasteModal);
     item('📷  Matrix from screenshot / photo…', () => App.pickImage());
     item('📋  Matrix from clipboard (image or text)', () => App.readClipboard());
+    item('🖼  Insert a picture…', () => MX.Draw.pickImage());
     item('⤢  Fit everything in view', Ed.fit);
     sep('Display');
     item((MX.settings.display === 'frac' ? '● ' : '○ ') + 'Fractions', () => setDisplay('frac'));
@@ -492,6 +509,7 @@
       if (!$('modal').hidden) return closeModal();
       if (Ed.popoverOpen()) return Ed.closePopover();
       if (typing(ev.target)) return;
+      if (MX.Draw.tool !== 'select') return MX.Draw.setTool('select');
       if (Ed.sel.length) return Ed.clearSelection();
       if (X.isOpen()) return X.close();
       return;
@@ -499,12 +517,13 @@
     if (mod && ev.key.toLowerCase() === 'z' && !typing(ev.target)) { ev.preventDefault(); ev.shiftKey ? Ed.redo() : Ed.undo(); return; }
     if (mod && ev.key.toLowerCase() === 'y' && !typing(ev.target)) { ev.preventDefault(); Ed.redo(); return; }
     if (typing(ev.target)) return;
+    if (MX.Draw.handleKey(ev)) return;
     if (mod && ev.key.toLowerCase() === 'd') { ev.preventDefault(); if (Ed.sel.length) duplicate(Ed.sel); return; }
     if (mod && ev.key.toLowerCase() === 'a') { ev.preventDefault(); Ed.sel = []; Ed.state.items.forEach((i) => Ed.select(i.id, 'add')); return; }
     if (mod) return;
     if ((ev.key === 'Delete' || ev.key === 'Backspace') && Ed.sel.length) { ev.preventDefault(); Ed.remove(Ed.sel.slice()); Ed.commit(); return; }
-    if (ev.key === 'n' || ev.key === 'N') { ev.preventDefault(); App.newMatrixPicker($('btn-new')); return; }
-    if (ev.key === 'e' || ev.key === 'E') { ev.preventDefault(); X.toggle(); return; }
+    if (ev.key === 'n' || ev.key === 'N' || ev.key === 'm' || ev.key === 'M') { ev.preventDefault(); App.newMatrixPicker($('btn-new')); return; }
+    if (ev.key === 'E' && ev.shiftKey) { ev.preventDefault(); X.toggle(); return; }
     if (ev.key === '/') { ev.preventDefault(); $('cmd').focus(); return; }
     if (ev.key === 'Enter' && Ed.sel.length === 1) { const it = Ed.get(Ed.sel[0]); if (it.kind === 'matrix') { ev.preventDefault(); Ed.focusCell(it, 0, 0); } }
   }
@@ -517,7 +536,7 @@
     const A = Ed.addMatrix({ name: 'A', cells: [['2', '1', '-1'], ['-3', '-1', '2'], ['-2', '1', '2']], x: x0, y: y0 });
     Ed.addMatrix({ name: 'b', cells: [['8'], ['-11'], ['-3']], x: x0 + (narrow ? 210 : 260), y: y0 });
     Ed.addMatrix({ name: 'B', cells: [['1', '2'], ['3', '4']], x: x0 + (narrow ? 0 : 400), y: y0 + (narrow ? 230 : 0) });
-    Ed.addNote({ text: 'Scratchpad tips ✎\n• tap R1/C1 handles for row & column ops\n• "+ temp row" for side calculations\n• select A then b → "solve Ax=b"\n• ƒ on a matrix → every operation, with steps\n• double-tap the paper for a new matrix\n• paste a screenshot of a matrix to import it', x: x0 + (narrow ? 0 : 400), y: y0 + (narrow ? 380 : 170) });
+    Ed.addNote({ text: 'Scratchpad tips ✎\n• tap R1/C1 handles for row & column ops\n• "+ temp row" for side calculations\n• select A then b → "solve Ax=b"\n• ƒ on a matrix → every operation, with steps\n• double-tap the paper for a new matrix\n• paste a screenshot of a matrix to import it\n• draw & annotate with the toolbar (R, O, A, P, T…)', x: x0 + (narrow ? 0 : 400), y: y0 + (narrow ? 380 : 170) });
     Ed.state.view = { x: 0, y: 0, z: narrow ? 0.9 : 1 };
     Ed.commit(); Ed.applyView();
     void A;
@@ -526,6 +545,7 @@
   function boot() {
     loadPrefs();
     Ed.init($('stage'), $('world'));
+    MX.Draw.init();
     X.init();
     if (!Ed.restore()) seed();
     Ed.applyView();
