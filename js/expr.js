@@ -31,7 +31,7 @@
   const FUNCS = {
     inv: 'inverse', inverse: 'inverse', det: 'det', rref: 'rref', ref: 'ref', rank: 'rank', tr: 'trace', trace: 'trace',
     adj: 'adj', cof: 'cofactor', cofactor: 'cofactor', null: 'null', kernel: 'null', col: 'colspace', colspace: 'colspace', row: 'rowspace', rowspace: 'rowspace',
-    solve: 'solve', lstsq: 'lstsq', kron: 'kron', had: 'hadamard', hadamard: 'hadamard', lu: 'lu', qr: 'qr', svd: 'svd',
+    solve: 'solve', solveaug: 'solveaug', lstsq: 'lstsq', kron: 'kron', had: 'hadamard', hadamard: 'hadamard', lu: 'lu', qr: 'qr', svd: 'svd',
     eig: 'eigvecs', eigvals: 'eigvals', eigvecs: 'eigvecs', charpoly: 'charpoly', diagonalize: 'diag', props: 'props', transpose: 'transpose',
   };
   MX.exprFuncs = FUNCS;

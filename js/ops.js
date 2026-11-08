@@ -348,7 +348,7 @@
       free.forEach((fj, t) => { const c = R[r][fj].neg(); if (!c.isZero()) s += (c.sign() < 0 ? ' − ' : ' + ') + (c.abs().isOne() ? '' : pv(c.abs())) + pname(t); });
       lines.push(`x${sub(j + 1)} = ${s.replace(/^0 \+ /, '').replace(/^0 − /, '−')}`);
     }
-    S.add('Infinitely many solutions', { text: `Pivot columns: ${pcols.map((c) => c + 1).join(', ')}. Columns ${free.map((c) => c + 1).join(', ')} have no pivot, so x${free.map((c) => sub(c + 1)).join(', x')} ${free.length > 1 ? 'are free variables' : 'is a free variable'}. Solve each pivot variable in terms of the free ones:`, eq: lines.join('\n'), mats: [snap('RREF', R, { aug: n, pivots: g.pivots })] });
+    S.add('Infinitely many solutions', { text: `Pivot columns: ${pcols.map((c) => c + 1).join(', ')}. Column${free.length > 1 ? 's' : ''} ${free.map((c) => c + 1).join(', ')} ${free.length > 1 ? 'have' : 'has'} no pivot, so x${free.map((c) => sub(c + 1)).join(', x')} ${free.length > 1 ? 'are free variables' : 'is a free variable'}. Solve each pivot variable in terms of the free ones:`, eq: lines.join('\n'), mats: [snap('RREF', R, { aug: n, pivots: g.pivots })] });
     const vec = `x = xₚ + ${free.map((_, t) => pname(t) + '·v' + sub(t + 1)).join(' + ')}`;
     S.add('Vector (parametric) form', { text: 'Split the solution into a particular solution plus a combination of null-space vectors:', eq: vec, mats: [snap('xₚ', xp)].concat(basis.map((v, t) => snap('v' + sub(t + 1), v))) });
     return { kind: 'multi', items: [{ kind: 'text', label: 'General solution', text: vec + '\n' + lines.join('\n') }, { kind: 'matrix', label: 'xp', M: xp }].concat(basis.map((v, t) => ({ kind: 'matrix', label: 'v' + (t + 1), M: v }))) };
@@ -356,6 +356,16 @@
   def('solve', {
     name: 'Solve Ax = b', short: 'Ax=b', group: 'Row reduction', inputs: [{ name: 'A' }, { name: 'b', hint: 'column vector' }],
     run([A, b], o, S) { return solveSystem(A, b, S); },
+  });
+  def('solveaug', {
+    name: 'Solve augmented matrix [A | b]', short: 'solve[A|b]', group: 'Row reduction', inputs: [{ name: 'M', hint: 'augmented [A | b]' }],
+    run([Mx], o, S) {
+      const n = M.cols(Mx) - 1;
+      need(n >= 1, 'An augmented matrix needs at least two columns: the coefficients and the right-hand side.');
+      const A = Mx.map((r) => r.slice(0, n)), b = Mx.map((r) => [r[n]]);
+      S.add('Split into A and b', { text: `Treat the last column as the right-hand side b and the first ${n} column${n > 1 ? 's' : ''} as the coefficient matrix A (${M.rows(A)} equation${M.rows(A) > 1 ? 's' : ''} in ${n} unknown${n > 1 ? 's' : ''}).`, mats: [snap('[A | b]', Mx, { aug: n }), snap('A', A), snap('b', b)] });
+      return solveSystem(A, b, S);
+    },
   });
   def('lstsq', {
     name: 'Least squares (best fit Ax ≈ b)', short: 'lstsq', group: 'Row reduction', inputs: [{ name: 'A' }, { name: 'b', hint: 'column vector' }],

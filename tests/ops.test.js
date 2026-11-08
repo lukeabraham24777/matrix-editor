@@ -95,3 +95,18 @@ test('expressions', () => {
   assert.equal(T(ev('rref(A)')), '1 0\n0 1');
   assert.deepEqual(MX.parseCommand('C = A*B'), { name: 'C', expr: ' A*B' });
 });
+test('solve augmented matrix [A | b]', () => {
+  const unique = run('solveaug', [P('2 1 -1 8\n-3 -1 2 -11\n-2 1 2 -3')]);
+  assert.equal(T(unique.M), '2\n3\n-1');
+  assert.equal(run('solveaug', [P('1 2 4 3\n2 4 6 4\n4 6 8 0')]).kind, 'matrix');
+  const gen = run('solveaug', [P('0 1 -6 6\n1 -2 8 -7')]);
+  assert.equal(gen.kind, 'multi');
+  assert.match(gen.items[0].text, /x = xₚ \+ s·v₁/);
+  // particular solution + s·v must satisfy A x = b
+  const A = P('0 1 -6\n1 -2 8'), b = P('6\n-7');
+  const xp = gen.items[1].M, v = gen.items[2].M;
+  assert.ok(M.eq(M.mul(A, xp), b));
+  assert.ok(M.mul(A, v).every((r) => r[0].isZero()));
+  assert.equal(run('solveaug', [P('1 1 1\n1 1 2')]).kind, 'text');
+  assert.equal(T(MX.evaluate('solveaug([1 0 5; 0 1 7])', () => undefined)), '5\n7');
+});

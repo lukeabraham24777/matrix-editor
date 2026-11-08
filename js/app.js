@@ -41,7 +41,7 @@
   };
   function overlaps(p) { return Ed.state.items.some((it) => { const r = Ed.itemRect(it); return p.x < r.x + r.w + 20 && p.x + 120 > r.x && p.y < r.y + r.h + 20 && p.y + 80 > r.y; }); }
 
-  const CAP = { mul: (n) => `${n[0]}·${n[1]}`, add: (n) => `${n[0]} + ${n[1]}`, sub: (n) => `${n[0]} − ${n[1]}`, scale: (n) => `${n[0]}·${n[1]}`, pow: (n) => `${n[0]}^${n[1]}`, transpose: (n) => `${n[0]}ᵀ`, inverse: (n) => `${n[0]}⁻¹`, solve: (n) => `${n[0]}x = ${n[1]}`, lstsq: (n) => `${n[0]}x ≈ ${n[1]}`, hadamard: (n) => `${n[0]}∘${n[1]}`, kron: (n) => `${n[0]}⊗${n[1]}` };
+  const CAP = { mul: (n) => `${n[0]}·${n[1]}`, add: (n) => `${n[0]} + ${n[1]}`, sub: (n) => `${n[0]} − ${n[1]}`, scale: (n) => `${n[0]}·${n[1]}`, pow: (n) => `${n[0]}^${n[1]}`, transpose: (n) => `${n[0]}ᵀ`, inverse: (n) => `${n[0]}⁻¹`, solve: (n) => `${n[0]}x = ${n[1]}`, solveaug: (n) => `solve [${n[0]}]`, lstsq: (n) => `${n[0]}x ≈ ${n[1]}`, hadamard: (n) => `${n[0]}∘${n[1]}`, kron: (n) => `${n[0]}⊗${n[1]}` };
   App.caption = (key, names) => (CAP[key] ? CAP[key](names) : `${MX.ops[key].short}(${names.join(', ')})`);
   /** Compute or explain an operation on workspace items. */
   App.runOp = function (key, operands, mode) {
@@ -380,6 +380,7 @@
       const sq = Ed.dims(A)[0] === Ed.dims(A)[1];
       if (sq) bar.append(b('det', `det(${n})`, run('det', o)), b(n + '⁻¹', 'Inverse', run('inverse', o)));
       bar.append(b(n + 'ᵀ', 'Transpose', run('transpose', o)), b('RREF', 'Reduced row echelon form', run('rref', o)), b('rank', 'Rank', run('rank', o)));
+      if (Ed.dims(A)[1] >= 2) bar.append(b('solve [A|b]', `Treat ${n} as an augmented matrix (last column = b) and find the general solution`, run('solveaug', o)));
       if (sq) bar.append(b('eig', 'Eigenvalues & eigenvectors', run('eigvecs', o)));
       bar.append(b('ƒ…', 'All operations', (e) => opsMenu(A, e.currentTarget), 'accent'));
     } else if (mats.length === 2 && items.length === 2) {
@@ -433,7 +434,7 @@
       sec('Solving', [
         ['Quick ops', 'Select one or two matrices — the bar at the bottom offers det, inverse, RREF, A·B, solve…'],
         ['All ops', 'ƒ on a matrix lists every operation; "steps" opens the explainer'],
-        ['Command bar', 'C = A*B · inv(A) · A^T or A\' · A^-1 · det(A) · rref(A) · solve(A, b) · 2A - 3I(3) · [1 2; 3 4] · lu(A) · eig(A)'],
+        ['Command bar', 'C = A*B · inv(A) · A^T or A\' · A^-1 · det(A) · rref(A) · solve(A, b) · solveaug(M) · 2A - 3I(3) · [1 2; 3 4] · lu(A) · eig(A)'],
         ['Explainer', 'Press E. Choose an operation and matrices, then Step by step or Just the answer'],
       ]),
       sec('Keys', [
@@ -545,7 +546,8 @@
       if (X.isOpen()) return X.close();
       const mats = Ed.sel.map(Ed.get).filter((i) => i && i.kind === 'matrix');
       if (mats.length) {
-        const op = mats.length >= 2 ? 'mul' : (Ed.dims(mats[0])[0] === Ed.dims(mats[0])[1] ? 'det' : 'rref');
+        const [mr, nc] = Ed.dims(mats[0]);
+        const op = mats.length >= 2 ? 'mul' : mr === nc ? 'det' : nc > mr ? 'solveaug' : 'rref';
         X.open({ op, operands: mats.map((m) => ({ id: m.id })) });
       } else X.open();
     });
