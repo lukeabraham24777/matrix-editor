@@ -1,0 +1,476 @@
+/* Application shell: toolbar, command bar, menus, selection bar, clipboard and keyboard. */
+(function (G) {
+  'use strict';
+  const MX = G.MX;
+  const { Frac, M, el } = MX;
+  const Ed = MX.Ed, X = MX.Explainer;
+  const App = (MX.App = {});
+  const $ = (id) => document.getElementById(id);
+  let stepsMode = false;
+
+  /* ---------- results ---------- */
+  App.insertResultItem = function (item, caption, near, pos) {
+    near = near || (Ed.sel.length ? Ed.get(Ed.sel[Ed.sel.length - 1]) : null);
+    let it;
+    if (item.kind === 'matrix') {
+      const cells = item.M.map((r) => r.map((x) => (x instanceof Frac ? x.toString() : typeof x === 'number' ? MX.fmtNumber(x, 8) : String(x))));
+      const spot = pos || Ed.freeSpot(near, 60 + cells[0].length * 50, 50 + cells.length * 36);
+      const pref = /^[A-Za-z_]\w*$/.test(item.label || '') && item.label.length <= 2 ? item.label : null;
+      it = Ed.addMatrix({ cells, x: spot.x, y: spot.y, caption: (caption ? caption + (item.label && item.label.length > 2 ? ' → ' + item.label : '') : ''), name: pref });
+    } else {
+      const text = item.kind === 'scalar' ? `${item.label || caption || 'value'} = ${MX.fmt(item.v)}` : (caption ? caption + '\n' : '') + item.text;
+      const spot = pos || Ed.freeSpot(near, 200, 60);
+      it = Ed.addNote({ text, x: spot.x, y: spot.y, result: true });
+    }
+    Ed.commit();
+    requestAnimationFrame(() => Ed.scrollIntoView(it));
+    flash(it);
+    return it;
+  };
+  function flash(it) { const e = Ed.els.get(it.id); if (e) { e.classList.add('flash'); setTimeout(() => e.classList.remove('flash'), 900); } }
+  App.insertResult = function (res, caption, near) {
+    const items = res.kind === 'multi' ? res.items : [res];
+    let last = null, made = [];
+    items.forEach((item) => {
+      let pos = null;
+      if (last) { const r = Ed.itemRect(last); pos = Ed.freeSpot(null, 100, 60); pos = { x: r.x, y: r.y + r.h + 28 }; if (overlaps(pos)) pos = null; }
+      last = App.insertResultItem(item, caption, near, pos);
+      made.push(last);
+    });
+    return made;
+  };
+  function overlaps(p) { return Ed.state.items.some((it) => { const r = Ed.itemRect(it); return p.x < r.x + r.w + 20 && p.x + 120 > r.x && p.y < r.y + r.h + 20 && p.y + 80 > r.y; }); }
+
+  const CAP = { mul: (n) => `${n[0]}·${n[1]}`, add: (n) => `${n[0]} + ${n[1]}`, sub: (n) => `${n[0]} − ${n[1]}`, scale: (n) => `${n[0]}·${n[1]}`, pow: (n) => `${n[0]}^${n[1]}`, transpose: (n) => `${n[0]}ᵀ`, inverse: (n) => `${n[0]}⁻¹`, solve: (n) => `${n[0]}x = ${n[1]}`, lstsq: (n) => `${n[0]}x ≈ ${n[1]}`, hadamard: (n) => `${n[0]}∘${n[1]}`, kron: (n) => `${n[0]}⊗${n[1]}` };
+  App.caption = (key, names) => (CAP[key] ? CAP[key](names) : `${MX.ops[key].short}(${names.join(', ')})`);
+  /** Compute or explain an operation on workspace items. */
+  App.runOp = function (key, operands, mode) {
+    const op = MX.ops[key];
+    mode = mode || (stepsMode ? 'steps' : 'answer');
+    const names = operands.map((o) => (o.id ? Ed.get(o.id).name : o.value));
+    if (mode === 'steps') { X.open({ op: key, operands, run: 'steps' }); return; }
+    try {
+      const args = operands.map((o, i) => {
+        const kind = op.inputs[i].kind || 'matrix';
+        if (kind === 'matrix') return Ed.matrixOf(Ed.get(o.id));
+        const x = Frac.parse(o.value);
+        return kind === 'int' ? Number(x.n) : x;
+      });
+      const r = MX.run(key, args, {}, false);
+      if (r.error) throw new Error(r.error);
+      const first = operands.find((o) => o.id);
+      App.insertResult(r.result, App.caption(key, names), first ? Ed.get(first.id) : null);
+    } catch (e) { Ed.toast(e.message, true); }
+  };
+
+  /* ---------- command bar ---------- */
+  const hist = []; let hIdx = -1;
+  function runCommand(src) {
+    const msg = $('cmd-msg');
+    const show = (t, err) => { msg.textContent = t; msg.hidden = false; msg.classList.toggle('err', !!err); clearTimeout(show.t); show.t = setTimeout(() => { msg.hidden = true; }, err ? 6000 : 3000); };
+    src = src.trim(); if (!src) return;
+    hist.push(src); hIdx = hist.length;
+    const { name, expr } = MX.parseCommand(src);
+    try {
+      if (name && !/^[A-Za-z_]\w*$/.test(name)) throw new Error('Invalid name');
+      const v = MX.evaluate(expr, Ed.resolve);
+      const caption = expr.trim();
+      if (Array.isArray(v)) {
+        const existing = name && Ed.byName(name);
+        if (existing && existing.kind === 'matrix') {
+          Ed.setCells(existing, v.map((r) => r.map((x) => x.toString())));
+          existing.caption = caption; Ed.refresh(existing); Ed.commit(); flash(existing); Ed.scrollIntoView(existing);
+          show(`Updated ${name}`);
+        } else {
+          if (existing) throw new Error(`"${name}" is already used by a note`);
+          const it = App.insertResultItem({ kind: 'matrix', M: v, label: name || '' }, caption);
+          if (name && it.name !== name) { it.name = name; Ed.refresh(it); Ed.commit(); }
+          show(`Created ${it.name} (${M.dimStr(v)})`);
+        }
+      } else if (v instanceof Frac) {
+        if (name) {
+          const ex = Ed.byName(name);
+          if (ex && ex.kind === 'matrix') throw new Error(`"${name}" is a matrix`);
+          if (ex) { ex.value = v.toString(); ex.text = `${name} = ${MX.fmt(v)}   (${caption})`; Ed.refresh(ex); Ed.commit(); }
+          else { const sp = Ed.freeSpot(Ed.sel.length ? Ed.get(Ed.sel[0]) : null, 200, 60); const it = Ed.addNote({ name, value: v.toString(), text: `${name} = ${MX.fmt(v)}   (${caption})`, x: sp.x, y: sp.y, result: true }); Ed.commit(); flash(it); }
+        } else App.insertResultItem({ kind: 'scalar', v, label: caption });
+        show(`${name || caption} = ${MX.fmt(v)}`);
+      } else if (v && v.special) {
+        App.insertResult(v.special, caption);
+        show('Done');
+      }
+      $('cmd').value = '';
+    } catch (e) { show(e.message, true); }
+  }
+
+  /* ---------- new-matrix picker ---------- */
+  App.newMatrixPicker = function (anchor, worldPos) {
+    const N = 6;
+    const box = el('div', { class: 'picker' });
+    const lbl = el('div', { class: 'picker-lbl' }, 'Pick a size');
+    const grid = el('div', { class: 'picker-grid' });
+    const create = (m, n, cells) => {
+      Ed.closePopover();
+      const pos = worldPos || Ed.freeSpot(Ed.sel.length ? Ed.get(Ed.sel[Ed.sel.length - 1]) : null, 60 + n * 46, 40 + m * 36);
+      const it = Ed.addMatrix({ rows: m, cols: n, cells, x: Math.round(pos.x), y: Math.round(pos.y) });
+      Ed.select(it.id); Ed.commit();
+      requestAnimationFrame(() => { Ed.scrollIntoView(it); if (!cells) Ed.focusCell(it, 0, 0); });
+    };
+    for (let i = 1; i <= N; i++) for (let j = 1; j <= N; j++) {
+      const c = el('div', { class: 'pk', 'data-i': i, 'data-j': j });
+      c.addEventListener('pointerenter', () => { grid.querySelectorAll('.pk').forEach((x) => x.classList.toggle('on', +x.dataset.i <= i && +x.dataset.j <= j)); lbl.textContent = `${i} × ${j}`; });
+      c.addEventListener('click', () => create(i, j));
+      grid.append(c);
+    }
+    const mi = el('input', { type: 'number', min: 1, max: 30, value: 3, class: 'num' }), ni = el('input', { type: 'number', min: 1, max: 30, value: 3, class: 'num' });
+    const ta = el('textarea', { rows: 3, placeholder: 'or paste: 1 2; 3 4 · [[1,2],[3,4]] · LaTeX · spreadsheet cells', spellcheck: 'false', autocapitalize: 'off' });
+    box.append(el('div', { class: 'pop-title' }, el('b', null, 'New matrix')), lbl, grid,
+      el('div', { class: 'pop-line' }, mi, el('span', null, '×'), ni, el('button', { class: 'tb small primary', onclick: () => create(Math.max(1, Math.min(30, +mi.value || 1)), Math.max(1, Math.min(30, +ni.value || 1))) }, 'Create')),
+      el('div', { class: 'pop-line col' }, ta, el('button', { class: 'tb small', onclick: () => { const P = M.parseText(ta.value); if (!P) return Ed.toast('Could not read a matrix from that text', true); create(P.length, P[0].length, P); } }, 'Create from text')),
+      el('div', { class: 'pop-line' }, el('span', { class: 'muted' }, 'Quick:'),
+        el('button', { class: 'tb small', onclick: () => create(3, 3, M.toStrings(M.identity(3))) }, 'I₃'),
+        el('button', { class: 'tb small', onclick: () => create(3, 1) }, 'vector 3×1'),
+        el('button', { class: 'tb small', onclick: () => { const r = () => String(Math.floor(Math.random() * 11) - 5); create(3, 3, Array.from({ length: 3 }, () => [r(), r(), r()])); } }, 'random 3×3')));
+    Ed.showPopover(anchor, box);
+  };
+
+  /* ---------- per-matrix operations menu ---------- */
+  function opsMenu(it, anchor) {
+    if (!Ed.sel.includes(it.id)) Ed.select(it.id);
+    const box = el('div', { class: 'opsmenu' });
+    box.append(el('div', { class: 'pop-title' }, el('b', null, 'Operations on ' + it.name), el('span', { class: 'spacer' }),
+      el('label', { class: 'mode-toggle', title: 'Show steps in the explainer instead of only the answer' }, el('input', { type: 'checkbox', checked: stepsMode || null, onchange: (e) => { stepsMode = e.target.checked; syncSelbar(); } }), ' steps')));
+    const others = Ed.matrices().filter((m) => m.id !== it.id);
+    const groups = {};
+    MX.opList.forEach((op) => { (groups[op.group] = groups[op.group] || []).push(op); });
+    for (const [g, list] of Object.entries(groups)) {
+      box.append(el('div', { class: 'om-group' }, g));
+      list.forEach((op) => {
+        const controls = [];
+        let firstMatrixUsed = false;
+        const getters = op.inputs.map((inp) => {
+          const kind = inp.kind || 'matrix';
+          if (kind === 'matrix') {
+            if (!firstMatrixUsed) { firstMatrixUsed = true; controls.push(el('span', { class: 'om-arg self' }, it.name)); return () => ({ id: it.id }); }
+            const s = el('select', { class: 'om-sel', title: inp.name }, others.map((o) => el('option', { value: o.id }, o.name)));
+            if (!others.length) s.append(el('option', { value: '' }, '—'));
+            // prefer the next selected matrix
+            const nxt = Ed.sel.find((id) => id !== it.id && Ed.get(id)?.kind === 'matrix'); if (nxt) s.value = nxt;
+            controls.push(s);
+            return () => { if (!s.value) throw new Error(`Add another matrix to use for ${inp.name}`); return { id: s.value }; };
+          }
+          const ti = el('input', { class: 'om-num', value: inp.def || '', title: inp.name, size: 3 });
+          controls.push(el('span', { class: 'om-arg' }, inp.name + '='), ti);
+          return () => ({ value: ti.value || '0' });
+        });
+        const go = (mode) => { try { const operands = getters.map((g2) => g2()); Ed.closePopover(); App.runOp(op.key, operands, mode); } catch (e) { Ed.toast(e.message, true); } };
+        box.append(el('div', { class: 'om-row' },
+          el('button', { class: 'om-name', onclick: () => go(), title: 'Compute and place the result on the scratchpad' }, op.name),
+          el('span', { class: 'om-controls' }, controls),
+          el('button', { class: 'om-btn', title: 'Compute', onclick: () => go('answer') }, '='),
+          el('button', { class: 'om-btn steps', title: 'Explain step by step', onclick: () => go('steps') }, 'steps')));
+      });
+    }
+    Ed.showPopover(anchor, box);
+  }
+
+  /* ---------- per-item "more" menu ---------- */
+  function copyText(text, what) {
+    const done = () => Ed.toast(`Copied ${what}`);
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, () => fallbackCopy(text, done));
+    else fallbackCopy(text, done);
+  }
+  function fallbackCopy(text, done) { const ta = el('textarea', { style: { position: 'fixed', opacity: 0 } }); ta.value = text; document.body.append(ta); ta.select(); try { document.execCommand('copy'); done(); } catch (e) { Ed.toast('Copy failed', true); } ta.remove(); }
+  function moreMenu(it, anchor) {
+    const box = el('div', { class: 'menu' });
+    const item = (label, fn, cls) => box.append(el('button', { class: 'mi' + (cls ? ' ' + cls : ''), onclick: () => { Ed.closePopover(); try { fn(); } catch (e) { Ed.toast(e.message, true); } } }, label));
+    const sep = (t) => box.append(el('div', { class: 'msep' }, t || ''));
+    if (it.kind === 'matrix') {
+      item('⧉  Duplicate', () => duplicate([it.id]));
+      sep('Copy as');
+      const A = () => Ed.matrixOf(it);
+      item('Plain text / spreadsheet', () => { copyItems([it.id]); copyText(M.toText(A()), 'as text'); });
+      item('LaTeX (bmatrix)', () => copyText(M.toLatex(A()), 'LaTeX'));
+      item('Python / NumPy list', () => copyText(M.toPython(A()), 'Python'));
+      item('MATLAB', () => copyText(M.toMatlab(A()), 'MATLAB'));
+      sep('Edit');
+      item('Transpose in place', () => { Ed.setCells(it, M.transpose(it.cells)); it.tmpRows = []; it.tmpCols = []; Ed.log(it, `${it.name} ← ${it.name}ᵀ`); Ed.refresh(it); Ed.commit(); });
+      item('Simplify entries (evaluate)', () => { Ed.setCells(it, M.toStrings(A())); Ed.refresh(it); Ed.commit(); });
+      item('Fill with identity', () => { const [m, n] = Ed.dims(it); Ed.setCells(it, Array.from({ length: m }, (_, i) => Array.from({ length: n }, (_, j) => (i === j ? '1' : '0')))); Ed.refresh(it); Ed.commit(); });
+      item('Fill with random integers', () => { const [m, n] = Ed.dims(it); Ed.setCells(it, Array.from({ length: m }, () => Array.from({ length: n }, () => String(Math.floor(Math.random() * 13) - 6)))); Ed.refresh(it); Ed.commit(); });
+      item('Clear all entries', () => { const [m, n] = Ed.dims(it); Ed.setCells(it, Array.from({ length: m }, () => Array.from({ length: n }, () => ''))); Ed.refresh(it); Ed.commit(); });
+      item('+ Temporary row', () => Ed.addTemp(it, 'row'));
+      item('+ Temporary column', () => Ed.addTemp(it, 'col'));
+      item(it.showLog ? 'Hide row-operation history' : 'Show row-operation history', () => { it.showLog = !it.showLog; Ed.refresh(it); Ed.commit(); });
+      if (it.caption) item('Remove caption', () => { it.caption = ''; Ed.refresh(it); Ed.commit(); });
+    } else {
+      item('⧉  Duplicate', () => duplicate([it.id]));
+      item('Copy text', () => copyText(it.text, 'text'));
+    }
+    sep();
+    item('Delete', () => { Ed.remove([it.id]); Ed.commit(); }, 'danger');
+    Ed.showPopover(anchor, box);
+  }
+
+  /* ---------- clipboard (items) ---------- */
+  let clip = null; // { text, items }
+  function copyItems(ids) {
+    const items = ids.map((id) => Ed.get(id)).filter(Boolean).map((i) => JSON.parse(JSON.stringify(i)));
+    if (!items.length) return null;
+    const text = items.length === 1 && items[0].kind === 'matrix' ? items[0].cells.map((r) => r.map((s) => s || '0').join('\t')).join('\n')
+      : items.map((i) => (i.kind === 'matrix' ? `${i.name} =\n` + i.cells.map((r) => r.map((s) => s || '0').join('\t')).join('\n') : i.text)).join('\n\n');
+    clip = { text, items };
+    return text;
+  }
+  function pasteItems(items, at) {
+    const x0 = Math.min(...items.map((i) => i.x)), y0 = Math.min(...items.map((i) => i.y));
+    const base = at || { x: x0 + 32, y: y0 + 32 };
+    const ids = [];
+    items.forEach((src) => {
+      const pos = { x: Math.round(base.x + src.x - x0), y: Math.round(base.y + src.y - y0) };
+      let it;
+      if (src.kind === 'matrix') {
+        it = Ed.addMatrix({ cells: src.cells, x: pos.x, y: pos.y, caption: src.caption, name: src.name });
+        it.tmpRows = JSON.parse(JSON.stringify(src.tmpRows || [])); it.tmpCols = JSON.parse(JSON.stringify(src.tmpCols || [])); it.log = []; Ed.refresh(it);
+      } else it = Ed.addNote({ text: src.text, x: pos.x, y: pos.y, result: src.result });
+      ids.push(it.id);
+    });
+    Ed.sel = []; ids.forEach((id) => Ed.select(id, 'add'));
+    Ed.commit();
+  }
+  function duplicate(ids) { const t = copyItems(ids); if (t != null) pasteItems(clip.items); }
+  function pasteText(text, at) {
+    if (clip && text && text.trim() === clip.text.trim()) { pasteItems(clip.items, at); return; }
+    const P = M.parseText(text);
+    if (!P) { Ed.toast('Clipboard does not contain a matrix', true); return; }
+    const pos = at || Ed.freeSpot(null, P[0].length * 50, P.length * 36);
+    const it = Ed.addMatrix({ cells: P, x: Math.round(pos.x), y: Math.round(pos.y) });
+    Ed.select(it.id); Ed.commit(); flash(it);
+    Ed.toast(`Pasted ${P.length}×${P[0].length} matrix as ${it.name}`);
+  }
+  function pasteModal() {
+    const ta = el('textarea', { rows: 6, placeholder: 'Paste a matrix here:\n1 2 3\n4 5 6\n\nAlso accepts [[1,2],[3,4]], [1 2; 3 4], LaTeX, or cells copied from a spreadsheet.', spellcheck: 'false', autocapitalize: 'off' });
+    openModal('Paste a matrix', el('div', null, ta, el('div', { class: 'modal-actions' }, el('button', { class: 'tb primary', onclick: () => { closeModal(); pasteText(ta.value); } }, 'Create matrix'))));
+    setTimeout(() => ta.focus(), 50);
+  }
+
+  /* ---------- selection bar ---------- */
+  function syncSelbar() {
+    const bar = $('selbar');
+    const items = Ed.sel.map((id) => Ed.get(id)).filter(Boolean);
+    bar.innerHTML = '';
+    if (!items.length) { bar.hidden = true; return; }
+    bar.hidden = false;
+    const mats = items.filter((i) => i.kind === 'matrix');
+    const b = (label, title, fn, cls) => el('button', { class: 'sb' + (cls ? ' ' + cls : ''), title, onclick: fn }, label);
+    const run = (key, ...ops) => () => App.runOp(key, ops);
+    bar.append(el('label', { class: 'mode-toggle', title: 'When on, quick operations open the step-by-step explainer' }, el('input', { type: 'checkbox', checked: stepsMode || null, onchange: (e) => { stepsMode = e.target.checked; syncSelbar(); } }), el('span', null, 'steps')));
+    const names = items.map((i) => i.name || 'note').join(', ');
+    bar.append(el('span', { class: 'sb-names' }, names));
+    if (mats.length === 1 && items.length === 1) {
+      const A = mats[0]; const n = A.name; const o = { id: A.id };
+      const sq = Ed.dims(A)[0] === Ed.dims(A)[1];
+      if (sq) bar.append(b('det', `det(${n})`, run('det', o)), b(n + '⁻¹', 'Inverse', run('inverse', o)));
+      bar.append(b(n + 'ᵀ', 'Transpose', run('transpose', o)), b('RREF', 'Reduced row echelon form', run('rref', o)), b('rank', 'Rank', run('rank', o)));
+      if (sq) bar.append(b('eig', 'Eigenvalues & eigenvectors', run('eigvecs', o)));
+      bar.append(b('ƒ…', 'All operations', (e) => opsMenu(A, e.currentTarget), 'accent'));
+    } else if (mats.length === 2 && items.length === 2) {
+      const [A, B] = mats; const a = { id: A.id }, bb = { id: B.id };
+      const [m1, n1] = Ed.dims(A), [m2, n2] = Ed.dims(B);
+      if (m1 === m2 && n1 === n2) bar.append(b(`${A.name}+${B.name}`, 'Add', run('add', a, bb)), b(`${A.name}−${B.name}`, 'Subtract', run('sub', a, bb)));
+      if (n1 === m2) bar.append(b(`${A.name}·${B.name}`, 'Multiply', run('mul', a, bb)));
+      if (n2 === m1) bar.append(b(`${B.name}·${A.name}`, 'Multiply', run('mul', bb, a)));
+      if (m1 === m2) bar.append(b(`solve ${A.name}x=${B.name}`, `Solve ${A.name}x = ${B.name}`, run('solve', a, bb)));
+      bar.append(b('⇄', 'Swap places', () => { [A.x, B.x] = [B.x, A.x]; [A.y, B.y] = [B.y, A.y]; [A, B].forEach((m) => { const e = Ed.els.get(m.id); e.classList.add('animate'); e.style.left = m.x + 'px'; e.style.top = m.y + 'px'; setTimeout(() => e.classList.remove('animate'), 300); }); Ed.commit(); }));
+      bar.append(b('ƒ…', 'All operations', (e) => opsMenu(A, e.currentTarget), 'accent'));
+    }
+    bar.append(el('span', { class: 'sb-sep' }),
+      b('⧉', 'Duplicate (Ctrl+D)', () => duplicate(Ed.sel)),
+      b('⎘', 'Copy (Ctrl+C)', () => { const t = copyItems(Ed.sel); if (t != null) copyText(t, items.length > 1 ? items.length + ' items' : items[0].name || 'note'); }),
+      b('🗑', 'Delete (Del)', () => { Ed.remove(Ed.sel.slice()); Ed.commit(); }, 'danger'),
+      b('✕', 'Clear selection (Esc)', () => Ed.clearSelection()));
+  }
+
+  /* ---------- modal & app menu ---------- */
+  function openModal(title, body) {
+    const m = $('modal');
+    m.innerHTML = '';
+    const card = el('div', { class: 'modal-card' }, el('div', { class: 'modal-head' }, el('h3', null, title), el('button', { class: 'tb icon', onclick: closeModal }, '✕')), body);
+    m.append(card); m.hidden = false;
+    m.onclick = (e) => { if (e.target === m) closeModal(); };
+  }
+  function closeModal() { $('modal').hidden = true; }
+  App.help = function () {
+    const sec = (t, rows) => el('section', null, el('h4', null, t), el('dl', null, rows.map(([k, v]) => [el('dt', null, k), el('dd', null, v)])));
+    openModal('How to use the scratchpad', el('div', { class: 'help' },
+      sec('Matrices', [
+        ['New', 'Double-click / double-tap empty paper, or press N'],
+        ['Edit', 'Type in a cell. Fractions (3/4), decimals and arithmetic (1/3+2) all work. Enter moves down, arrows move around, Ctrl+Enter on the last row adds a row'],
+        ['Resize', 'Drag the corner ◢, or tap the + on the right / bottom edge'],
+        ['Paste', 'Paste a block of numbers into any cell to fill (and grow) the matrix, or press Ctrl+V on the paper to create a new one'],
+        ['Move', 'Drag by the header. Drop it on another matrix to swap their places'],
+        ['Select', 'Click a header; Shift-click (or long-press on touch) to select several; Shift-drag on paper to box-select'],
+      ]),
+      sec('Rows & columns', [
+        ['Row ops', 'Tap R1, R2… to open the row tool. Type R2 - 3R1, *2, /3, swap R1, = 1 2 3, then Enter'],
+        ['Reorder', 'Drag an R/C handle to move a row or column'],
+        ['Temp lines', '+ temp row / col gives scratch space below/right of the matrix. Give it an expression like R1 - 2R2; it updates live. Then write it back into any row'],
+        ['History', 'Every row operation is written under the matrix'],
+      ]),
+      sec('Solving', [
+        ['Quick ops', 'Select one or two matrices — the bar at the bottom offers det, inverse, RREF, A·B, solve…'],
+        ['All ops', 'ƒ on a matrix lists every operation; "steps" opens the explainer'],
+        ['Command bar', 'C = A*B · inv(A) · A^T or A\' · A^-1 · det(A) · rref(A) · solve(A, b) · 2A - 3I(3) · [1 2; 3 4] · lu(A) · eig(A)'],
+        ['Explainer', 'Press E. Choose an operation and matrices, then Step by step or Just the answer'],
+      ]),
+      sec('Keys', [
+        ['Ctrl+Z / Ctrl+Shift+Z', 'Undo / redo'], ['Ctrl+C / X / V / D', 'Copy, cut, paste, duplicate selected'], ['Delete', 'Delete selected'], ['Ctrl+scroll / pinch', 'Zoom'], ['Scroll / drag paper', 'Pan'], ['/', 'Focus the command bar'],
+      ])));
+  };
+  function appMenu(anchor) {
+    const box = el('div', { class: 'menu' });
+    const item = (label, fn, cls) => box.append(el('button', { class: 'mi' + (cls ? ' ' + cls : ''), onclick: () => { Ed.closePopover(); fn(); } }, label));
+    const sep = (t) => box.append(el('div', { class: 'msep' }, t || ''));
+    item('📋  Paste matrix from text…', pasteModal);
+    item('⤢  Fit everything in view', Ed.fit);
+    sep('Display');
+    item((MX.settings.display === 'frac' ? '● ' : '○ ') + 'Fractions', () => setDisplay('frac'));
+    item((MX.settings.display === 'dec' ? '● ' : '○ ') + 'Decimals', () => setDisplay('dec'));
+    item('◐  Toggle paper / chalkboard', toggleTheme);
+    sep('File');
+    item('⬇  Export scratchpad (.json)', exportJSON);
+    item('⬆  Import scratchpad…', importJSON);
+    item('🧹  Clear everything', () => { if (confirm('Delete every matrix and note on the scratchpad?')) { Ed.remove(Ed.state.items.map((i) => i.id)); Ed.commit(); } }, 'danger');
+    sep();
+    item('?  Help & shortcuts', App.help);
+    Ed.showPopover(anchor, box);
+  }
+  function setDisplay(mode) { MX.settings.display = mode; savePrefs(); if (X.isOpen() && X.steps.length) X.run(X.mode || 'steps'); Ed.toast(mode === 'frac' ? 'Showing exact fractions in explanations' : 'Showing decimals in explanations'); }
+  function toggleTheme() {
+    const root = document.documentElement;
+    const dark = root.dataset.theme ? root.dataset.theme !== 'dark' : !matchMedia('(prefers-color-scheme: dark)').matches;
+    root.dataset.theme = dark ? 'dark' : 'light';
+    savePrefs();
+  }
+  function savePrefs() { try { localStorage.setItem('matrix-scratchpad-prefs', JSON.stringify({ display: MX.settings.display, theme: document.documentElement.dataset.theme || '' })); } catch (e) { /* ignore */ } }
+  function loadPrefs() { try { const p = JSON.parse(localStorage.getItem('matrix-scratchpad-prefs') || '{}'); if (p.display) MX.settings.display = p.display; if (p.theme) document.documentElement.dataset.theme = p.theme; } catch (e) { /* ignore */ } }
+  function exportJSON() {
+    const blob = new Blob([JSON.stringify({ app: 'matrix-scratchpad', version: 1, items: Ed.state.items, seq: Ed.state.seq }, null, 1)], { type: 'application/json' });
+    const a = el('a', { href: URL.createObjectURL(blob), download: 'matrix-scratchpad.json' });
+    document.body.append(a); a.click(); a.remove();
+  }
+  function importJSON() {
+    const inp = el('input', { type: 'file', accept: '.json,application/json' });
+    inp.onchange = () => {
+      const f = inp.files[0]; if (!f) return;
+      f.text().then((t) => { const d = JSON.parse(t); if (!Array.isArray(d.items)) throw new Error('Not a scratchpad file'); Ed.load(d); Ed.commit(); Ed.fit(); Ed.toast('Imported'); }).catch((e) => Ed.toast(e.message, true));
+    };
+    inp.click();
+  }
+
+  /* ---------- keyboard ---------- */
+  const typing = (t) => t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
+  function keys(ev) {
+    const mod = ev.ctrlKey || ev.metaKey;
+    if (ev.key === 'Escape') {
+      if (!$('modal').hidden) return closeModal();
+      if (Ed.popoverOpen()) return Ed.closePopover();
+      if (typing(ev.target)) return;
+      if (Ed.sel.length) return Ed.clearSelection();
+      if (X.isOpen()) return X.close();
+      return;
+    }
+    if (mod && ev.key.toLowerCase() === 'z' && !typing(ev.target)) { ev.preventDefault(); ev.shiftKey ? Ed.redo() : Ed.undo(); return; }
+    if (mod && ev.key.toLowerCase() === 'y' && !typing(ev.target)) { ev.preventDefault(); Ed.redo(); return; }
+    if (typing(ev.target)) return;
+    if (mod && ev.key.toLowerCase() === 'd') { ev.preventDefault(); if (Ed.sel.length) duplicate(Ed.sel); return; }
+    if (mod && ev.key.toLowerCase() === 'a') { ev.preventDefault(); Ed.sel = []; Ed.state.items.forEach((i) => Ed.select(i.id, 'add')); return; }
+    if (mod) return;
+    if ((ev.key === 'Delete' || ev.key === 'Backspace') && Ed.sel.length) { ev.preventDefault(); Ed.remove(Ed.sel.slice()); Ed.commit(); return; }
+    if (ev.key === 'n' || ev.key === 'N') { ev.preventDefault(); App.newMatrixPicker($('btn-new')); return; }
+    if (ev.key === 'e' || ev.key === 'E') { ev.preventDefault(); X.toggle(); return; }
+    if (ev.key === '/') { ev.preventDefault(); $('cmd').focus(); return; }
+    if (ev.key === 'Enter' && Ed.sel.length === 1) { const it = Ed.get(Ed.sel[0]); if (it.kind === 'matrix') { ev.preventDefault(); Ed.focusCell(it, 0, 0); } }
+  }
+
+  /* ---------- boot ---------- */
+  function seed() {
+    Ed.load({ items: [], seq: 1, view: { x: 0, y: 0, z: 1 } });
+    const narrow = window.innerWidth < 640;
+    const x0 = narrow ? 24 : 80, y0 = narrow ? 30 : 60;
+    const A = Ed.addMatrix({ name: 'A', cells: [['2', '1', '-1'], ['-3', '-1', '2'], ['-2', '1', '2']], x: x0, y: y0 });
+    Ed.addMatrix({ name: 'b', cells: [['8'], ['-11'], ['-3']], x: x0 + (narrow ? 210 : 260), y: y0 });
+    Ed.addMatrix({ name: 'B', cells: [['1', '2'], ['3', '4']], x: x0 + (narrow ? 0 : 400), y: y0 + (narrow ? 230 : 0) });
+    Ed.addNote({ text: 'Scratchpad tips ✎\n• tap R1/C1 handles for row & column ops\n• "+ temp row" for side calculations\n• select A then b → "solve Ax=b"\n• ƒ on a matrix → every operation, with steps\n• double-tap the paper for a new matrix', x: x0 + (narrow ? 0 : 400), y: y0 + (narrow ? 380 : 170) });
+    Ed.state.view = { x: 0, y: 0, z: narrow ? 0.9 : 1 };
+    Ed.commit(); Ed.applyView();
+    void A;
+  }
+
+  function boot() {
+    loadPrefs();
+    Ed.init($('stage'), $('world'));
+    X.init();
+    if (!Ed.restore()) seed();
+    Ed.applyView();
+    Ed.on('selection', syncSelbar);
+    Ed.on('change', syncSelbar);
+    Ed.on('ops', opsMenu);
+    Ed.on('more', moreMenu);
+    Ed.on('dbltap', (cx, cy) => { const w = Ed.toWorld(cx, cy); App.newMatrixPicker({ getBoundingClientRect: () => ({ left: cx, right: cx, top: cy, bottom: cy }) }, { x: w.x - 20, y: w.y - 16 }); });
+    Ed.on('view', () => { $('zoom-reset').textContent = Math.round(Ed.state.view.z * 100) + '%'; });
+    $('zoom-reset').textContent = Math.round(Ed.state.view.z * 100) + '%';
+    syncSelbar();
+
+    $('btn-new').addEventListener('click', (e) => App.newMatrixPicker(e.currentTarget));
+    $('btn-note').addEventListener('click', () => { const p = Ed.freeSpot(null, 200, 80); const it = Ed.addNote({ text: '', x: p.x, y: p.y }); Ed.select(it.id); Ed.els.get(it.id).querySelector('.note-body').focus(); });
+    $('btn-undo').addEventListener('click', Ed.undo);
+    $('btn-redo').addEventListener('click', Ed.redo);
+    $('btn-explain').addEventListener('click', () => {
+      if (X.isOpen()) return X.close();
+      const mats = Ed.sel.map(Ed.get).filter((i) => i && i.kind === 'matrix');
+      if (mats.length) {
+        const op = mats.length >= 2 ? 'mul' : (Ed.dims(mats[0])[0] === Ed.dims(mats[0])[1] ? 'det' : 'rref');
+        X.open({ op, operands: mats.map((m) => ({ id: m.id })) });
+      } else X.open();
+    });
+    $('btn-menu').addEventListener('click', (e) => appMenu(e.currentTarget));
+    $('zoom-in').addEventListener('click', () => { const r = $('stage').getBoundingClientRect(); Ed.zoomAt(r.left + r.width / 2, r.top + r.height / 2, 1.2); });
+    $('zoom-out').addEventListener('click', () => { const r = $('stage').getBoundingClientRect(); Ed.zoomAt(r.left + r.width / 2, r.top + r.height / 2, 1 / 1.2); });
+    $('zoom-reset').addEventListener('click', () => { const r = $('stage').getBoundingClientRect(); Ed.zoomAt(r.left + r.width / 2, r.top + r.height / 2, 1 / Ed.state.view.z); });
+    $('zoom-fit').addEventListener('click', Ed.fit);
+
+    const cmd = $('cmd');
+    cmd.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') runCommand(cmd.value);
+      else if (e.key === 'ArrowUp' && hist.length) { hIdx = Math.max(0, hIdx - 1); cmd.value = hist[hIdx]; e.preventDefault(); }
+      else if (e.key === 'ArrowDown' && hist.length) { hIdx = Math.min(hist.length, hIdx + 1); cmd.value = hist[hIdx] || ''; e.preventDefault(); }
+      else if (e.key === 'Escape') cmd.blur();
+    });
+
+    document.addEventListener('keydown', keys);
+    document.addEventListener('pointerdown', (e) => {
+      const pop = $('popover');
+      if (!pop.hidden && !pop.contains(e.target) && !e.target.closest('.rh, .ch, .hb, .corner, #btn-new, #btn-menu, .sb.accent')) Ed.closePopover();
+    }, true);
+    document.addEventListener('copy', (e) => {
+      if (typing(e.target) || !Ed.sel.length || (window.getSelection() && String(window.getSelection()))) return;
+      const t = copyItems(Ed.sel); if (t == null) return;
+      e.clipboardData.setData('text/plain', t); e.preventDefault(); Ed.toast('Copied');
+    });
+    document.addEventListener('cut', (e) => {
+      if (typing(e.target) || !Ed.sel.length) return;
+      const t = copyItems(Ed.sel); if (t == null) return;
+      e.clipboardData.setData('text/plain', t); e.preventDefault(); Ed.remove(Ed.sel.slice()); Ed.commit();
+    });
+    document.addEventListener('paste', (e) => {
+      if (typing(e.target)) return;
+      e.preventDefault();
+      pasteText(e.clipboardData.getData('text/plain'), Ed.lastPointerWorld && insideStage() ? Ed.lastPointerWorld : null);
+    });
+    function insideStage() { const p = Ed.lastPointerWorld; const v = Ed.state.view; const r = $('stage').getBoundingClientRect(); const sx = p.x * v.z + v.x, sy = p.y * v.z + v.y; return sx > 0 && sy > 0 && sx < r.width && sy < r.height; }
+    window.addEventListener('resize', () => Ed.closePopover());
+    window.addEventListener('beforeunload', () => { Ed.commit(); });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})(window);

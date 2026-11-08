@@ -1,0 +1,10 @@
+{
+  "name": "matrix-scratchpad",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A browser scratchpad for matrices with step-by-step linear algebra explainers.",
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "start": "npx --yes serve -l 5173 ."
+  }
+}
