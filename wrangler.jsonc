@@ -1,0 +1,7 @@
+{
+  // Static-asset Worker: `npx wrangler deploy` uploads index.html, css/ and js/ directly.
+  "name": "matrix-scratchpad",
+  "compatibility_date": "2026-11-01",
+  "workers_dev": true,
+  "assets": { "directory": "./public" }
+}
