@@ -126,6 +126,7 @@
     const ta = el('textarea', { rows: 3, placeholder: 'or paste: 1 2; 3 4 · [[1,2],[3,4]] · LaTeX · spreadsheet cells', spellcheck: 'false', autocapitalize: 'off' });
     box.append(el('div', { class: 'pop-title' }, el('b', null, 'New matrix')), lbl, grid,
       el('div', { class: 'pop-line' }, mi, el('span', null, '×'), ni, el('button', { class: 'tb small primary', onclick: () => create(Math.max(1, Math.min(30, +mi.value || 1)), Math.max(1, Math.min(30, +ni.value || 1))) }, 'Create')),
+      el('div', { class: 'pop-line' }, el('button', { class: 'tb small accent', style: { flex: 1 }, onclick: () => App.pickImage(worldPos) }, '📷  From a screenshot or photo…')),
       el('div', { class: 'pop-line col' }, ta, el('button', { class: 'tb small', onclick: () => { const P = M.parseText(ta.value); if (!P) return Ed.toast('Could not read a matrix from that text', true); create(P.length, P[0].length, P); } }, 'Create from text')),
       el('div', { class: 'pop-line' }, el('span', { class: 'muted' }, 'Quick:'),
         el('button', { class: 'tb small', onclick: () => create(3, 3, M.toStrings(M.identity(3))) }, 'I₃'),
@@ -254,6 +255,71 @@
     setTimeout(() => ta.focus(), 50);
   }
 
+  /* ---------- matrix from screenshot / photo ---------- */
+  App.importImage = function (file, at) {
+    if (!file || !/^image\//.test(file.type)) { Ed.toast('That is not an image', true); return; }
+    Ed.closePopover();
+    const status = el('div', { class: 'ocr-status' }, 'Reading the image…');
+    const bar = el('div', { class: 'ocr-bar' }, el('div'));
+    const preview = el('div', { class: 'ocr-preview' });
+    const ta = el('textarea', { rows: 4, spellcheck: 'false', autocapitalize: 'off', placeholder: 'Recognised numbers appear here — fix anything that was misread' });
+    const warn = el('div', { class: 'ocr-warn' });
+    const createBtn = el('button', { class: 'tb primary', disabled: true }, 'Create matrix');
+    const img = el('img', { class: 'ocr-img', alt: 'Your screenshot' });
+    const refresh = () => {
+      preview.innerHTML = ''; warn.textContent = '';
+      const P = M.parseText(ta.value);
+      createBtn.disabled = !P;
+      if (!P) return;
+      const bad = [];
+      P.forEach((r, i) => r.forEach((s, j) => { if (!Frac.tryParse(s)) bad.push(`row ${i + 1}, col ${j + 1}`); }));
+      const raggedNote = ta.value.split('\n').filter((l) => l.trim()).some((l) => M.parseText(l)[0].length !== P[0].length);
+      preview.append(MX.renderMatrix(P.map((r) => r.map((s) => s)), {}, `${P.length}×${P[0].length}`));
+      warn.textContent = (bad.length ? `Check: ${bad.join('; ')}. ` : '') + (raggedNote ? 'Some rows were shorter and were padded with 0 — check the preview.' : '');
+    };
+    ta.addEventListener('input', refresh);
+    const create = () => {
+      const P = M.parseText(ta.value); if (!P) return;
+      closeModal();
+      const pos = at || Ed.freeSpot(Ed.sel.length ? Ed.get(Ed.sel[Ed.sel.length - 1]) : null, P[0].length * 50, P.length * 36);
+      const it = Ed.addMatrix({ cells: P, x: Math.round(pos.x), y: Math.round(pos.y), caption: 'from image' });
+      Ed.select(it.id); Ed.commit(); flash(it); requestAnimationFrame(() => Ed.scrollIntoView(it));
+      Ed.toast(`Created ${it.name} (${P.length}×${P[0].length})`);
+    };
+    createBtn.addEventListener('click', create);
+    ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) create(); });
+    openModal('Matrix from image', el('div', { class: 'ocr' },
+      el('div', { class: 'ocr-top' }, img, el('div', { class: 'ocr-side' }, status, bar, preview)),
+      el('label', { class: 'ocr-lbl' }, 'Entries — one row per line (edit freely):'), ta, warn,
+      el('div', { class: 'modal-actions' }, el('button', { class: 'tb', onclick: closeModal }, 'Cancel'), createBtn)));
+    const labels = { 'loading tesseract core': 'Loading the OCR engine', 'initializing tesseract': 'Starting OCR', 'loading language traineddata': 'Loading number recogniser', 'initializing api': 'Starting OCR', 'recognizing text': 'Recognising numbers' };
+    MX.OCR.read(file, (m) => {
+      status.textContent = (labels[m.status] || m.status) + (m.progress ? ` ${Math.round(m.progress * 100)}%` : '') + '…';
+      bar.firstChild.style.width = Math.round((m.progress || 0) * 100) + '%';
+    }).then(({ rows, url }) => {
+      img.src = url;
+      bar.hidden = true;
+      const w = rows[0].length;
+      const colW = Array.from({ length: w }, (_, j) => Math.max(...rows.map((r) => (r[j] || '?').length)));
+      ta.value = rows.map((r) => r.map((s, j) => (s || '?').padStart(colW[j])).join('  ')).join('\n');
+      status.textContent = `Found a ${rows.length}×${w} matrix. Check it against the image, then create it.`;
+      refresh();
+      if (rows.some((r) => r.includes(''))) warn.textContent = 'Some entries could not be read and are marked "?" — please fill them in.';
+      ta.focus();
+    }).catch((e) => {
+      img.src = URL.createObjectURL(file);
+      bar.hidden = true;
+      status.textContent = '⚠ ' + e.message + ' — you can type the entries below instead.';
+      status.classList.add('err');
+      ta.focus();
+    });
+  };
+  App.pickImage = function (at) {
+    const inp = el('input', { type: 'file', accept: 'image/*' });
+    inp.onchange = () => { if (inp.files[0]) App.importImage(inp.files[0], at); };
+    inp.click();
+  };
+
   /* ---------- selection bar ---------- */
   function syncSelbar() {
     const bar = $('selbar');
@@ -308,6 +374,7 @@
         ['Edit', 'Type in a cell. Fractions (3/4), decimals and arithmetic (1/3+2) all work. Enter moves down, arrows move around, Ctrl+Enter on the last row adds a row'],
         ['Resize', 'Drag the corner ◢, or tap the + on the right / bottom edge'],
         ['Paste', 'Paste a block of numbers into any cell to fill (and grow) the matrix, or press Ctrl+V on the paper to create a new one'],
+        ['Screenshot', 'Paste a screenshot of a matrix (Ctrl+V), drop an image on the paper, or use + Matrix → From a screenshot or photo. You can check and fix the numbers before it is created'],
         ['Move', 'Drag by the header. Drop it on another matrix to swap their places'],
         ['Select', 'Click a header; Shift-click (or long-press on touch) to select several; Shift-drag on paper to box-select'],
       ]),
@@ -332,6 +399,7 @@
     const item = (label, fn, cls) => box.append(el('button', { class: 'mi' + (cls ? ' ' + cls : ''), onclick: () => { Ed.closePopover(); fn(); } }, label));
     const sep = (t) => box.append(el('div', { class: 'msep' }, t || ''));
     item('📋  Paste matrix from text…', pasteModal);
+    item('📷  Matrix from screenshot / photo…', () => App.pickImage());
     item('⤢  Fit everything in view', Ed.fit);
     sep('Display');
     item((MX.settings.display === 'frac' ? '● ' : '○ ') + 'Fractions', () => setDisplay('frac'));
@@ -401,7 +469,7 @@
     const A = Ed.addMatrix({ name: 'A', cells: [['2', '1', '-1'], ['-3', '-1', '2'], ['-2', '1', '2']], x: x0, y: y0 });
     Ed.addMatrix({ name: 'b', cells: [['8'], ['-11'], ['-3']], x: x0 + (narrow ? 210 : 260), y: y0 });
     Ed.addMatrix({ name: 'B', cells: [['1', '2'], ['3', '4']], x: x0 + (narrow ? 0 : 400), y: y0 + (narrow ? 230 : 0) });
-    Ed.addNote({ text: 'Scratchpad tips ✎\n• tap R1/C1 handles for row & column ops\n• "+ temp row" for side calculations\n• select A then b → "solve Ax=b"\n• ƒ on a matrix → every operation, with steps\n• double-tap the paper for a new matrix', x: x0 + (narrow ? 0 : 400), y: y0 + (narrow ? 380 : 170) });
+    Ed.addNote({ text: 'Scratchpad tips ✎\n• tap R1/C1 handles for row & column ops\n• "+ temp row" for side calculations\n• select A then b → "solve Ax=b"\n• ƒ on a matrix → every operation, with steps\n• double-tap the paper for a new matrix\n• paste a screenshot of a matrix to import it', x: x0 + (narrow ? 0 : 400), y: y0 + (narrow ? 380 : 170) });
     Ed.state.view = { x: 0, y: 0, z: narrow ? 0.9 : 1 };
     Ed.commit(); Ed.applyView();
     void A;
@@ -464,11 +532,23 @@
       e.clipboardData.setData('text/plain', t); e.preventDefault(); Ed.remove(Ed.sel.slice()); Ed.commit();
     });
     document.addEventListener('paste', (e) => {
+      const imgItem = [...(e.clipboardData.items || [])].find((i) => i.kind === 'file' && /^image\//.test(i.type));
+      if (imgItem && $('modal').hidden) { e.preventDefault(); App.importImage(imgItem.getAsFile(), Ed.lastPointerWorld && insideStage() ? Ed.lastPointerWorld : null); return; }
       if (typing(e.target)) return;
       e.preventDefault();
       pasteText(e.clipboardData.getData('text/plain'), Ed.lastPointerWorld && insideStage() ? Ed.lastPointerWorld : null);
     });
     function insideStage() { const p = Ed.lastPointerWorld; const v = Ed.state.view; const r = $('stage').getBoundingClientRect(); const sx = p.x * v.z + v.x, sy = p.y * v.z + v.y; return sx > 0 && sy > 0 && sx < r.width && sy < r.height; }
+    const stageEl = $('stage');
+    stageEl.addEventListener('dragover', (e) => { if ([...e.dataTransfer.types].includes('Files')) { e.preventDefault(); stageEl.classList.add('drop-on'); } });
+    stageEl.addEventListener('dragleave', () => stageEl.classList.remove('drop-on'));
+    stageEl.addEventListener('drop', (e) => {
+      stageEl.classList.remove('drop-on');
+      const f = [...e.dataTransfer.files].find((x) => /^image\//.test(x.type));
+      if (f) { e.preventDefault(); App.importImage(f, Ed.toWorld(e.clientX, e.clientY)); return; }
+      const t = e.dataTransfer.getData('text/plain');
+      if (t) { e.preventDefault(); pasteText(t, Ed.toWorld(e.clientX, e.clientY)); }
+    });
     window.addEventListener('resize', () => Ed.closePopover());
     window.addEventListener('beforeunload', () => { Ed.commit(); });
   }

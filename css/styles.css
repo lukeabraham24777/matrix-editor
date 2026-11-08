@@ -358,3 +358,17 @@ body.ex-open .selbar { left: 12px; transform: none; max-width: calc(100% - 150px
   .toast { bottom: calc(118px + env(safe-area-inset-bottom)); }
   .opsmenu { min-width: 0; }
 }
+
+/* ---------- screenshot import ---------- */
+.stage.drop-on { outline: 3px dashed var(--pen); outline-offset: -8px; }
+.ocr-top { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; margin: 8px 0 10px; }
+.ocr-img { max-width: min(100%, 300px); max-height: 180px; border: 1px solid var(--border); border-radius: 8px; background: #fff; object-fit: contain; }
+.ocr-img:not([src]) { display: none; }
+.ocr-side { flex: 1; min-width: 180px; display: flex; flex-direction: column; gap: 8px; }
+.ocr-status { font-size: 14px; color: var(--ink-soft); }
+.ocr-status.err { color: var(--pen); }
+.ocr-bar { height: 4px; background: var(--panel-2); border-radius: 2px; overflow: hidden; }
+.ocr-bar > div { height: 100%; width: 0; background: var(--pen); transition: width 0.2s; }
+.ocr-lbl { display: block; font-size: 13px; color: var(--ink-soft); margin-bottom: 4px; }
+.ocr textarea { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 15px; white-space: pre; }
+.ocr-warn { font-size: 13px; color: var(--pen); margin-top: 4px; min-height: 1em; }
