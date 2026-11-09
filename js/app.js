@@ -223,6 +223,7 @@
     try { return COPY_FORMATS[fmt || App.copyFormat][1](Ed.matrixOf(it)); }
     catch (e) { return it.cells.map((r) => r.map((s) => s || '0').join('\t')).join('\n'); }
   }
+  App.cellsText = (cells) => { try { return COPY_FORMATS[App.copyFormat][1](M.fromStrings(cells.map((r) => r.map((s) => s || '0')))); } catch (e) { return cells.map((r) => r.join('\t')).join('\n'); } };
   function copyItems(ids) {
     const items = ids.map((id) => Ed.get(id)).filter(Boolean).map((i) => JSON.parse(JSON.stringify(i)));
     if (!items.length) return null;
@@ -435,7 +436,7 @@
     openModal('How to use the scratchpad', el('div', { class: 'help' },
       sec('Matrices', [
         ['New', 'Double-click / double-tap empty paper, or press N'],
-        ['Edit', 'Type in a cell. Fractions (3/4), decimals and arithmetic (1/3+2) all work. Enter moves down, arrows move around, Ctrl+Enter on the last row adds a row'],
+        ['Edit', 'Type in a cell — fractions (3/4), decimals and arithmetic (1/3+2) all work. Tab moves right; Enter goes to the next row (back to where you started tabbing), and on the last row adds a new one. Backspace in an empty cell steps back through the matrix'],
         ['Resize', 'Drag the corner ◢, or tap the + on the right / bottom edge'],
         ['Paste', 'Paste a block of numbers into any cell to fill (and grow) the matrix, or press Ctrl+V on the paper to create a new one'],
         ['Screenshot', 'Paste a screenshot of a matrix (Ctrl+V), drop an image on the paper, or use + Matrix → From a screenshot or photo. You can check and fix the numbers before it is created'],
@@ -445,6 +446,7 @@
       sec('Rows & columns', [
         ['Row ops', 'Tap R1, R2… to open the row tool. Type R2 - 3R1, *2, /3, swap R1, = 1 2 3, then Enter'],
         ['Reorder', 'Drag an R/C handle to move a row or column'],
+        ['Copy a column', 'Tap its C handle → Copy. Then select another matrix and press Ctrl+V to add it as the last column, use "Paste after" in any C/R tool, or Ctrl+V on empty paper for a new matrix. Rows work the same way'],
         ['Temp lines', '+ temp row / col gives scratch space below/right of the matrix. Give it an expression like R1 - 2R2; it updates live. Then write it back into any row'],
         ['History', 'Every row operation is written under the matrix'],
       ]),
@@ -616,7 +618,16 @@
       if (img) { e.preventDefault(); App.importImage(img, Ed.lastPointerWorld && insideStage() ? Ed.lastPointerWorld : null); return; }
       if (typing(e.target)) return;
       e.preventDefault();
-      pasteText(e.clipboardData.getData('text/plain'), Ed.lastPointerWorld && insideStage() ? Ed.lastPointerWorld : null);
+      const text = e.clipboardData.getData('text/plain');
+      // a copied row/column + one selected matrix → add it to the end of that matrix
+      const target = Ed.sel.length === 1 && Ed.get(Ed.sel[0]);
+      if (Ed.lineClip && text.trim() === Ed.lineClip.text.trim() && target && target.kind === 'matrix') {
+        const len = Ed.lineClip.lines[0].length, k = Ed.lineClip.lines.length;
+        const type = Ed.lineClip.type === 'col' ? (len === Ed.dims(target)[0] ? 'col' : 'row') : (len === Ed.dims(target)[1] ? 'row' : 'col');
+        try { Ed.pasteLine(target, type); Ed.toast(`Added as the last ${k > 1 ? k + ' ' : ''}${type === 'col' ? 'column' : 'row'}${k > 1 ? 's' : ''} of ${target.name} (Ctrl+Z to undo)`); } catch (err) { Ed.toast(err.message, true); }
+        return;
+      }
+      pasteText(text, Ed.lastPointerWorld && insideStage() ? Ed.lastPointerWorld : null);
     });
     function insideStage() { const p = Ed.lastPointerWorld; const v = Ed.state.view; const r = $('stage').getBoundingClientRect(); const sx = p.x * v.z + v.x, sy = p.y * v.z + v.y; return sx > 0 && sy > 0 && sx < r.width && sy < r.height; }
     const stageEl = $('stage');

@@ -272,7 +272,8 @@
     const sx = r.x * v.z + v.x, sy = r.y * v.z + v.y, sw = r.w * v.z, sh = r.h * v.z;
     let dx = 0, dy = 0;
     if (sx < 10) dx = 10 - sx; else if (sx + sw > sr.width - 10) dx = Math.max(sr.width - 10 - sx - sw, 10 - sx);
-    if (sy < 10) dy = 10 - sy; else if (sy + sh > sr.height - 80) dy = Math.max(sr.height - 80 - sy - sh, 10 - sy);
+    const top = window.innerWidth > 760 ? 70 : 10; // the drawing toolbar floats at the top on desktop
+    if (sy < top) dy = top - sy; else if (sy + sh > sr.height - 80) dy = Math.max(sr.height - 80 - sy - sh, top - sy);
     if (dx || dy) { v.x += dx; v.y += dy; Ed.applyView(); }
   };
   /** Find a free spot near `it` (to the right, then below). */
@@ -355,14 +356,15 @@
     applyWidths(it, grid);
     const put = (node, r, c) => { node.style.gridRow = r; node.style.gridColumn = c; grid.append(node); return node; };
     const ls = Ed.lineSel && Ed.lineSel.id === it.id ? Ed.lineSel : null;
+    const lsOn = (t, k) => !!ls && ls.type === t && (ls.idxs || [ls.idx]).includes(k);
     put(el('div', { class: 'corner', title: 'Select all cells' }), 1, 1);
-    for (let j = 0; j < n; j++) put(el('div', { class: 'ch' + (ls && ls.type === 'col' && ls.idx === j ? ' on' : ''), 'data-col': j, title: `Column ${j + 1}: tap for column operations, drag to reorder` }, 'C' + (j + 1)), 1, j + 2);
+    for (let j = 0; j < n; j++) put(el('div', { class: 'ch' + (lsOn('col', j) ? ' on' : ''), 'data-col': j, title: `Column ${j + 1}: tap for column operations, drag to reorder` }, 'C' + (j + 1)), 1, j + 2);
     TC.forEach((t, k) => put(el('div', { class: 'ch tmp' + (t.err ? ' err' : '') + (ls && ls.type === 'tcol' && ls.idx === k ? ' on' : ''), 'data-tcol': k, title: (t.expr ? 'T' + (k + 1) + ' = ' + t.expr : 'Temporary column T' + (k + 1)) + (t.err ? '\n⚠ ' + t.err : '') }, 'T' + (k + 1)), 1, n + 2 + k));
     for (let i = 0; i < m; i++) {
-      const rowOn = ls && ls.type === 'row' && ls.idx === i;
+      const rowOn = lsOn('row', i);
       put(el('div', { class: 'rh' + (rowOn ? ' on' : ''), 'data-row': i, title: `Row ${i + 1}: tap for row operations, drag to reorder` }, 'R' + (i + 1)), i + 2, 1);
       for (let j = 0; j < n; j++) {
-        const on = rowOn || (ls && ls.type === 'col' && ls.idx === j);
+        const on = rowOn || lsOn('col', j);
         put(el('input', { class: 'cell' + (on ? ' line-on' : '') + (validCell(it.cells[i][j]) ? '' : ' bad'), value: it.cells[i][j], placeholder: '0', 'data-r': i, 'data-c': j, 'data-k': `c${i}_${j}`, inputmode: 'text', autocomplete: 'off', spellcheck: 'false', enterkeyhint: 'next' }), i + 2, j + 2);
       }
       TC.forEach((t, k) => put(el('input', { class: 'cell tmp', value: t.cells[i] || '', placeholder: '·', 'data-tc': k, 'data-r': i, 'data-k': `tc${k}_${i}`, autocomplete: 'off', spellcheck: 'false' }), i + 2, n + 2 + k));
@@ -452,6 +454,7 @@
     });
     grid.addEventListener('focusout', (ev) => {
       const t = ev.target; if (!t.classList || !t.classList.contains('cell')) return;
+      if (!ev.relatedTarget || !card.contains(ev.relatedTarget)) setTimeout(() => { if (!Ed.els.get(it.id) || !Ed.els.get(it.id).contains(document.activeElement)) dropEmptyAutoRow(it); }, 0);
       const v = t.value.trim();
       if (v && !Frac.tryParse(v)) {
         try { const x = Frac.parse(v); t.value = x.toString(); t.dispatchEvent(new Event('input', { bubbles: true })); }
@@ -520,25 +523,69 @@
     if (inp) { inp.focus(); inp.select(); }
   }
   Ed.focusCell = focusCell;
+  let tabStart = null; // { id, col }: where a run of Tab presses began (Enter returns to that column)
   function cellKeys(ev, it, card) {
     const t = ev.target; if (!t.classList.contains('cell')) return;
     const all = [...card.querySelectorAll('.cell')];
     const pos = (x) => [x.style.gridRow, x.style.gridColumn].map(Number);
     const [r, c] = pos(t);
     const find = (dr, dc) => all.find((x) => { const [rr, cc] = pos(x); return rr === r + dr && cc === c + dc; });
+    const isData = t.dataset.tr == null && t.dataset.tc == null;
+    const [m, n] = Ed.dims(it);
+    const go = (target, caretEnd) => {
+      if (!target) return;
+      target.focus();
+      if (caretEnd) { const L = target.value.length; target.setSelectionRange(L, L); } else target.select();
+    };
     let target = null;
+    if (ev.key === 'Tab') {
+      if (isData && !ev.shiftKey && (!tabStart || tabStart.id !== it.id)) tabStart = { id: it.id, col: +t.dataset.c };
+      return; // native Tab order is row-major
+    }
+    if (isData && (ev.key === 'Backspace' || ev.key === 'Delete') && t.value === '' && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+      // walk through the matrix in row-major order once a cell is empty
+      const i = +t.dataset.r, j = +t.dataset.c;
+      const k = i * n + j + (ev.key === 'Backspace' ? -1 : 1);
+      if (k >= 0 && k < m * n) { ev.preventDefault(); go(card.querySelector(`.cell[data-r="${Math.floor(k / n)}"][data-c="${k % n}"]:not(.tmp)`), true); }
+      return;
+    }
     if (ev.key === 'Enter') {
+      ev.preventDefault();
+      if (isData && !ev.shiftKey) {
+        const i = +t.dataset.r;
+        const col = tabStart && tabStart.id === it.id ? tabStart.col : +t.dataset.c;
+        tabStart = null;
+        if (i === m - 1) {
+          // Enter on the last row adds a new row (removed again if you leave it empty)
+          Ed.insertRow(it, m); it.autoRow = m;
+          Ed.refresh(it); Ed.commit();
+          focusCell(it, m, col);
+          return;
+        }
+        go(Ed.els.get(it.id).querySelector(`.cell[data-r="${i + 1}"][data-c="${col}"]:not(.tmp)`));
+        return;
+      }
+      tabStart = null;
       target = find(ev.shiftKey ? -1 : 1, 0);
-      if (!target && !ev.shiftKey && t.dataset.tr == null && +t.dataset.r === it.cells.length - 1 && (ev.ctrlKey || ev.metaKey)) { Ed.insertRow(it, it.cells.length); Ed.refresh(it); Ed.commit(); focusCell(it, it.cells.length - 1, +t.dataset.c); ev.preventDefault(); return; }
-      if (!target) { t.blur(); }
-    } else if (ev.key === 'ArrowDown') target = find(1, 0);
+      if (target) go(target); else t.blur();
+      return;
+    }
+    if (ev.key === 'ArrowDown') target = find(1, 0);
     else if (ev.key === 'ArrowUp') target = find(-1, 0);
     else if (ev.key === 'ArrowLeft' && t.selectionStart === 0 && t.selectionEnd === 0) target = find(0, -1);
     else if (ev.key === 'ArrowRight' && t.selectionStart === t.value.length) target = find(0, 1);
     else if (ev.key === 'Escape') { t.blur(); return; }
     else return;
+    tabStart = null;
     ev.preventDefault();
-    if (target) { target.focus(); target.select(); }
+    go(target);
+  }
+  /** Drop a row that Enter created if focus leaves the matrix while it is still empty. */
+  function dropEmptyAutoRow(it) {
+    if (it.autoRow == null) return;
+    const k = it.autoRow; delete it.autoRow;
+    const row = it.cells[k];
+    if (row && it.cells.length > 1 && row.every((v) => !String(v || '').trim())) { Ed.removeRow(it, k); Ed.refresh(it); Ed.commit(); }
   }
 
   /* drag helpers using window listeners (robust to re-rendering) */
@@ -626,7 +673,21 @@
       }
     }, () => {
       const c = Ed.els.get(it.id); if (c) c.classList.remove('line-dragging');
-      if (!moved) { Ed.select(it.id); Ed.openLine(it, type, idx, handle); return; }
+      if (!moved) {
+        Ed.select(it.id);
+        const cur = Ed.lineSel && Ed.lineSel.id === it.id && Ed.lineSel.type === type ? (Ed.lineSel.idxs || [Ed.lineSel.idx]) : null;
+        if (cur && (ev.shiftKey || ev.ctrlKey || ev.metaKey || Ed.lineMulti)) {
+          let idxs;
+          if (ev.shiftKey) { const a = cur[cur.length - 1]; idxs = [...new Set(cur.concat(Array.from({ length: Math.abs(idx - a) + 1 }, (_, k) => Math.min(a, idx) + k)))]; }
+          else idxs = cur.includes(idx) ? cur.filter((k) => k !== idx) : cur.concat(idx);
+          if (!idxs.length) { Ed.lineSel = null; Ed.lineMulti = false; Ed.closePopover(); Ed.refresh(it); return; }
+          Ed.openLines(it, type, idxs.sort((a, b) => a - b), handle);
+          return;
+        }
+        Ed.lineMulti = false;
+        Ed.openLine(it, type, idx, handle);
+        return;
+      }
       if (swaps.length) {
         const P = type === 'row' ? 'R' : 'C';
         swaps.forEach(([a, b]) => Ed.log(it, `${P}${Math.min(a, b) + 1} ↔ ${P}${Math.max(a, b) + 1}`));
@@ -656,10 +717,35 @@
     }, () => { const c = Ed.els.get(it.id); if (c) c.classList.remove('resizing'); Ed.commit(); });
   }
 
+  /* ---------- copying whole rows / columns between matrices ---------- */
+  Ed.lineClip = null; // { type: 'row'|'col', lines: string[][], text }
+  Ed.copyLine = function (type, lines, label) {
+    lines = lines.map((l) => l.map((v) => v || '0'));
+    const cells = type === 'row' ? lines.map((l) => l.slice()) : lines[0].map((_, i) => lines.map((l) => l[i]));
+    const text = MX.App && MX.App.cellsText ? MX.App.cellsText(cells) : cells.map((r) => r.join('\t')).join('\n');
+    Ed.lineClip = { type, lines, text };
+    const done = () => Ed.toast(`Copied ${label} — select a matrix and press Ctrl+V to add it, or Ctrl+V on empty paper for a new matrix`);
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, done); else done();
+  };
+  /** Insert the copied line into `it` as a column (or row) at index `at` (default: the end). */
+  Ed.pasteLine = function (it, type, at) {
+    const c = Ed.lineClip; if (!c) throw new Error('Copy a row or column first (tap its R/C handle → Copy)');
+    const [m, n] = Ed.dims(it);
+    const need = type === 'col' ? m : n;
+    const len = c.lines[0].length, k = c.lines.length;
+    const what = `${k > 1 ? k + ' ' : ''}${c.type === 'col' ? 'column' : 'row'}${k > 1 ? 's' : ''}`;
+    if (len !== need) throw new Error(`The copied ${what} ${k > 1 ? 'have' : 'has'} ${len} entries each, but ${it.name} needs ${need} for a new ${type === 'col' ? 'column' : 'row'}`);
+    const start = at == null ? (type === 'col' ? n : m) : at;
+    c.lines.forEach((l, i) => { if (type === 'col') Ed.insertCol(it, start + i, l.slice()); else Ed.insertRow(it, start + i, l.slice()); });
+    const P = type === 'col' ? 'C' : 'R';
+    Ed.log(it, `insert copied ${what} as ${P}${start + 1}${k > 1 ? '–' + P + (start + k) : ''}`);
+    Ed.refresh(it); Ed.commit();
+  };
+
   /* ---------- line popover (row/column operations, temp lines) ---------- */
   Ed.openLine = function (it, type, idx, anchor, focusExpr) {
-    if (anchor && anchor.getBoundingClientRect) { const r0 = anchor.getBoundingClientRect(); anchor = { getBoundingClientRect: () => r0 }; }
-    Ed.lineSel = { id: it.id, type, idx };
+    anchor = lineAnchor(it, type, anchor);
+    const mySel = (Ed.lineSel = { id: it.id, type, idx });
     Ed.refresh(it);
     const [m, n] = Ed.dims(it);
     const isRow = type === 'row' || type === 'trow';
@@ -687,6 +773,9 @@
           b('×(−1)', 'Negate', () => { done(Ed.applyLineCommand(it, isRow ? 'row' : 'col', idx, '*-1')); reopen(type, idx); }),
           b(isRow ? '↑' : '←', 'Swap with previous', () => moveTo(idx - 1)),
           b(isRow ? '↓' : '→', 'Swap with next', () => moveTo(idx + 1)),
+          b('Copy', `Copy ${me} so you can paste it into another matrix (or as a new one)`, () => { Ed.copyLine(isRow ? 'row' : 'col', [vals()], `${it.name}'s ${isRow ? 'row' : 'column'} ${idx + 1}`); Ed.closePopover(); }),
+          b('Select more', `Select several ${isRow ? 'rows' : 'columns'}: tap other ${P} handles (or Shift/Ctrl-click them)`, () => { Ed.lineMulti = true; msg.textContent = `Now tap other ${P} handles to add them to the selection`; msg.className = 'pop-msg ok'; }),
+          Ed.lineClip ? b('Paste after', `Insert the copied ${Ed.lineClip.type === 'col' ? 'column(s)' : 'row(s)'} after ${me}`, () => { Ed.pasteLine(it, isRow ? 'row' : 'col', idx + 1); reopen(type, idx); }) : null,
           b('→ temp', `Copy ${me} into a temporary ${isRow ? 'row' : 'column'} for scratch work`, () => { Ed.addTemp(it, isRow ? 'row' : 'col', vals()); }),
           b('Fill…', 'Set every entry to a value', () => { inp.value = '= '; inp.focus(); msg.textContent = 'Type "= value" to fill, or "= 1 2 3" to set each entry'; msg.className = 'pop-msg'; }),
           b('Clear', 'Set all entries to 0', () => { (isRow ? it.cells[idx] : it.cells).forEach((_, k) => { if (isRow) it.cells[idx][k] = ''; else it.cells[k][idx] = ''; }); done(); reopen(type, idx); })),
@@ -696,7 +785,7 @@
           b('Duplicate', 'Duplicate this line', () => { isRow ? Ed.insertRow(it, idx + 1, it.cells[idx].slice()) : Ed.insertCol(it, idx + 1, vals()); done(); reopen(type, idx); }),
           b('Delete', 'Delete this line', () => { if (!(isRow ? Ed.removeRow(it, idx) : Ed.removeCol(it, idx))) throw new Error('A matrix needs at least one ' + (isRow ? 'row' : 'column')); Ed.lineSel = null; done(); Ed.closePopover(); }, 'danger')),
         el('div', { class: 'pop-hint' }, isRow ? 'Tip: drag the R handle up/down to reorder rows.' : 'Tip: drag the C handle left/right to reorder columns.'));
-      Ed.showPopover(anchor, pop, () => { if (Ed.lineSel && Ed.lineSel.id === it.id) { Ed.lineSel = null; if (Ed.get(it.id)) Ed.refresh(it); } });
+      Ed.showPopover(anchor, pop, () => { if (Ed.lineSel === mySel) { Ed.lineSel = null; Ed.lineMulti = false; if (Ed.get(it.id)) Ed.refresh(it); } });
       if (!isCoarse()) inp.focus();
       return;
     }
@@ -735,11 +824,72 @@
         })),
       el('div', { class: 'pop-btns' },
         b('Freeze values', 'Keep the numbers but drop the expression', () => { t.expr = ''; done(); reopen(type, idx); }),
+        b('Copy', 'Copy these values to paste into another matrix', () => { Ed.copyLine(isRow ? 'row' : 'col', [t.cells.slice()], `temporary ${isRow ? 'row' : 'column'} ${tname}`); Ed.closePopover(); }),
         b('Delete', 'Remove this temporary line', () => { list.splice(idx, 1); Ed.lineSel = null; done(); Ed.closePopover(); }, 'danger')),
       el('div', { class: 'pop-hint' }, isRow ? 'Use R1, R2… for rows and T1, T2… for temp rows. The temp row updates live as the matrix changes.' : 'Use C1, C2… for columns and T1, T2… for temp columns.'));
     if (t.err) fail(t.err);
-    Ed.showPopover(anchor, pop, () => { if (Ed.lineSel && Ed.lineSel.id === it.id) { Ed.lineSel = null; if (Ed.get(it.id)) Ed.refresh(it); } });
+    Ed.showPopover(anchor, pop, () => { if (Ed.lineSel === mySel) { Ed.lineSel = null; Ed.lineMulti = false; if (Ed.get(it.id)) Ed.refresh(it); } });
     if (focusExpr || !isCoarse()) inp.focus();
+  };
+
+  /** Rows: open the tool beside the matrix so the other R handles stay clickable. */
+  function lineAnchor(it, type, anchor) {
+    if (!anchor || !anchor.getBoundingClientRect) return anchor;
+    const h = anchor.getBoundingClientRect();
+    if (h.width === 0 && h.height === 0 && anchor.side) return anchor; // already resolved
+    if (type === 'row' || type === 'trow') {
+      const card = Ed.els.get(it.id); const c = card ? card.getBoundingClientRect() : h;
+      const r = { left: c.left, right: c.right, top: h.top, bottom: h.bottom };
+      return { side: 'right', getBoundingClientRect: () => r };
+    }
+    return { getBoundingClientRect: () => h };
+  }
+  /** Popover for several selected rows / columns of one matrix. */
+  Ed.openLines = function (it, type, idxs, anchor) {
+    anchor = lineAnchor(it, type, anchor);
+    const mySel = (Ed.lineSel = { id: it.id, type, idx: idxs[idxs.length - 1], idxs: idxs.slice() });
+    Ed.refresh(it);
+    const isRow = type === 'row';
+    const P = isRow ? 'R' : 'C';
+    const names = idxs.map((k) => P + (k + 1)).join(', ');
+    const msg = el('div', { class: 'pop-msg' });
+    const fail = (e) => { msg.textContent = e.message || e; msg.className = 'pop-msg err'; };
+    const lines = () => idxs.map((k) => (isRow ? it.cells[k].slice() : it.cells.map((r) => r[k])));
+    const finish = (logLine, close) => { if (logLine) Ed.log(it, logLine); Ed.refresh(it); Ed.commit(); if (close) Ed.closePopover(); else Ed.openLines(it, type, idxs, anchor); };
+    const b = (label, title, fn, cls) => el('button', { class: 'tb small' + (cls ? ' ' + cls : ''), title, onclick: () => { try { fn(); } catch (e) { fail(e); } } }, label);
+    const inp = el('input', { class: 'pop-in', placeholder: 'apply to each: *2  ·  /3  ·  *-1  ·  = 0', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', enterkeyhint: 'go' });
+    const apply = () => {
+      const cmd = inp.value.trim();
+      if (!/^([*×·/÷]|=)/.test(cmd)) throw new Error('With several lines selected, use *k, /k or = value');
+      const logs = idxs.map((k) => Ed.applyLineCommand(it, type, k, cmd));
+      finish(logs.join('; '));
+    };
+    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { try { apply(); } catch (err) { fail(err); } } });
+    const pop = el('div', { class: 'linepop' },
+      el('div', { class: 'pop-title' }, el('b', null, `${idxs.length} ${isRow ? 'rows' : 'columns'} selected`), el('span', { class: 'muted' }, ' ' + names)),
+      el('div', { class: 'pop-line' }, inp, b('Apply', 'Apply to every selected line', apply, 'primary')),
+      msg,
+      el('div', { class: 'pop-btns' },
+        b('Copy', `Copy ${names} to paste into another matrix or as a new one`, () => { Ed.copyLine(type, lines(), `${names} of ${it.name}`); Ed.lineMulti = false; Ed.closePopover(); }, 'primary'),
+        Ed.lineClip ? b('Paste after', `Insert the copied lines after ${P}${idxs[idxs.length - 1] + 1}`, () => { Ed.pasteLine(it, type, idxs[idxs.length - 1] + 1); Ed.closePopover(); }) : null,
+        b('New matrix', `Make a new matrix from ${names}`, () => {
+          const L = lines(); const cells = isRow ? L : L[0].map((_, i) => L.map((l) => l[i]));
+          const pos = Ed.freeSpot(it, 60 + cells[0].length * 50, 40 + cells.length * 36);
+          const nm = Ed.addMatrix({ cells, x: pos.x, y: pos.y, caption: `${names} of ${it.name}` });
+          Ed.lineMulti = false; Ed.closePopover(); Ed.select(nm.id); Ed.commit();
+        }),
+        b('×(−1)', 'Negate each', () => finish(idxs.map((k) => Ed.applyLineCommand(it, type, k, '*-1')).join('; '))),
+        b('Duplicate', 'Duplicate them (inserted after the last one)', () => { const L = lines(); const at = idxs[idxs.length - 1] + 1; L.forEach((l, i) => (isRow ? Ed.insertRow(it, at + i, l) : Ed.insertCol(it, at + i, l))); finish('', true); }),
+        b('Clear', 'Set every entry to 0', () => { idxs.forEach((k) => { if (isRow) it.cells[k] = it.cells[k].map(() => ''); else it.cells.forEach((r) => { r[k] = ''; }); }); finish(''); }),
+        b('Delete', 'Delete the selected lines', () => {
+          const total = isRow ? it.cells.length : Ed.dims(it)[1];
+          if (idxs.length >= total) throw new Error('A matrix needs at least one ' + (isRow ? 'row' : 'column'));
+          idxs.slice().sort((a, c) => c - a).forEach((k) => (isRow ? Ed.removeRow(it, k) : Ed.removeCol(it, k)));
+          Ed.lineSel = null; Ed.lineMulti = false; finish(`delete ${names}`, true);
+        }, 'danger')),
+      el('div', { class: 'pop-hint' }, `Shift-click a ${P} handle to select a range, Ctrl/⌘-click (or tap, while "Select more" is on) to add or remove one.`));
+    Ed.lineMulti = Ed.lineMulti || false;
+    Ed.showPopover(anchor, pop, () => { if (Ed.lineSel === mySel) { Ed.lineSel = null; Ed.lineMulti = false; if (Ed.get(it.id)) Ed.refresh(it); } });
   };
 
   /* ---------- popover ---------- */
@@ -755,6 +905,14 @@
     const r = anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : anchor;
     const pw = pop.offsetWidth, ph = pop.offsetHeight;
     let x = r.left, y = r.bottom + 6;
+    if (anchor.side === 'right') {
+      y = Math.min(r.top - 8, vh - ph - 8);
+      if (r.right + 10 + pw <= vw - 8) x = r.right + 10;
+      else if (r.left - 10 - pw >= 8) x = r.left - 10 - pw;
+      else { x = r.left; y = r.bottom + 6; }
+      pop.style.left = Math.max(8, x) + 'px'; pop.style.top = Math.max(8, y) + 'px';
+      return;
+    }
     if (x + pw > vw - 8) x = vw - pw - 8;
     if (y + ph > vh - 8) y = Math.max(8, r.top - ph - 6);
     pop.style.left = Math.max(8, x) + 'px'; pop.style.top = Math.max(8, y) + 'px';
