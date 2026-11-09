@@ -203,6 +203,7 @@
       item('Clear all entries', () => { const [m, n] = Ed.dims(it); Ed.setCells(it, Array.from({ length: m }, () => Array.from({ length: n }, () => ''))); Ed.refresh(it); Ed.commit(); });
       item('+ Temporary row', () => Ed.addTemp(it, 'row'));
       item('+ Temporary column', () => Ed.addTemp(it, 'col'));
+      item(it.aug ? 'Normal view (remove the [A | b] bar)' : 'Show as augmented [A | b]', () => { it.aug = !it.aug; Ed.refresh(it); Ed.commit(); });
       item(it.showLog ? 'Hide row-operation history' : 'Show row-operation history', () => { it.showLog = !it.showLog; Ed.refresh(it); Ed.commit(); });
       if (it.caption) item('Remove caption', () => { it.caption = ''; Ed.refresh(it); Ed.commit(); });
     } else {
@@ -223,6 +224,11 @@
     try { return COPY_FORMATS[fmt || App.copyFormat][1](Ed.matrixOf(it)); }
     catch (e) { return it.cells.map((r) => r.map((s) => s || '0').join('\t')).join('\n'); }
   }
+  App.copyResult = function (it) {
+    if (it.kind === 'matrix') { const cells = it.M.map((r) => r.map((x) => (x instanceof Frac ? x.toString() : typeof x === 'number' ? MX.fmtNumber(x, 8) : String(x)))); copyText(App.cellsText(cells), COPY_FORMATS[App.copyFormat][0].split(' ')[0] === '@MATX' ? 'as @MATX' : 'answer'); }
+    else if (it.kind === 'scalar') copyText(MX.fmt(it.v, 'frac'), 'value');
+    else copyText(it.text, 'text');
+  };
   App.cellsText = (cells) => { try { return COPY_FORMATS[App.copyFormat][1](M.fromStrings(cells.map((r) => r.map((s) => s || '0')))); } catch (e) { return cells.map((r) => r.join('\t')).join('\n'); } };
   function copyItems(ids) {
     const items = ids.map((id) => Ed.get(id)).filter(Boolean).map((i) => JSON.parse(JSON.stringify(i)));
@@ -396,6 +402,12 @@
     if (mats.length === 1 && items.length === 1) {
       const A = mats[0]; const n = A.name; const o = { id: A.id };
       const sq = Ed.dims(A)[0] === Ed.dims(A)[1];
+      try {
+        const Am = Ed.matrixOf(A); const [mr, nc] = Ed.dims(A);
+        const facts = [`${mr}×${nc}`, `rank ${MX.gauss(Am, {}).rank}`];
+        if (sq && mr <= 12) facts.push(`det ${MX.fmt(MX.det(Am))}`);
+        bar.append(el('span', { class: 'sb-info', title: 'Quick facts about ' + n }, facts.join(' · ')));
+      } catch (e) { /* invalid entries */ }
       if (sq) bar.append(b('det', `det(${n})`, run('det', o)), b(n + '⁻¹', 'Inverse', run('inverse', o)));
       bar.append(b(n + 'ᵀ', 'Transpose', run('transpose', o)), b('RREF', 'Reduced row echelon form', run('rref', o)), b('rank', 'Rank', run('rank', o)));
       if (Ed.dims(A)[1] >= 2) bar.append(b('solve [A|b]', `Treat ${n} as an augmented matrix (last column = b) and find the general solution`, run('solveaug', o)));
@@ -463,6 +475,11 @@
         ['Style', 'The panel on the left sets colour, fill, stroke, sloppiness, arrowheads, fonts, opacity, layer order and alignment'],
         ['Other', 'Ctrl+G group · Ctrl+Shift+G ungroup · Ctrl+] / [ layer order · arrow keys nudge · hold Space (or middle mouse) to pan'],
       ]),
+      sec('Pages & history', [
+        ['Pages', 'Tabs at the bottom-left (or ⋯ → Pages on phones) give you separate scratchpads — one per problem. Double-click a tab to rename it'],
+        ['History', 'The explainer remembers everything you ran (🕘 History). Click an entry to see its steps again'],
+        ['Answers', '⎘ Copy on any answer copies it in your copy format (e.g. @MATX)'],
+      ]),
       sec('Keys', [
         ['Ctrl+Z / Ctrl+Shift+Z', 'Undo / redo'], ['Ctrl+C / X / V / D', 'Copy, cut, paste, duplicate selected'], ['Delete', 'Delete selected'], ['Ctrl+scroll / pinch', 'Zoom'], ['Scroll · Space+drag · two fingers', 'Pan'], ['/', 'Focus the command bar'], ['N or M', 'New matrix'], ['Shift+E', 'Explainer'],
       ])));
@@ -471,6 +488,11 @@
     const box = el('div', { class: 'menu' });
     const item = (label, fn, cls) => box.append(el('button', { class: 'mi' + (cls ? ' ' + cls : ''), onclick: () => { Ed.closePopover(); fn(); } }, label));
     const sep = (t) => box.append(el('div', { class: 'msep' }, t || ''));
+    sep('Pages');
+    pages.list.forEach((pg) => item((pg.id === pages.current ? '● ' : '○ ') + pg.name, () => App.switchPage(pg.id)));
+    item('＋  New page', App.newPage);
+    item('✎  Rename this page', () => renamePage(pages.list.find((p) => p.id === pages.current)));
+    sep();
     item('📋  Paste matrix from text…', pasteModal);
     item('📷  Matrix from screenshot / photo…', () => App.pickImage());
     item('📋  Matrix from clipboard (image or text)', () => App.readClipboard());
@@ -554,12 +576,56 @@
     void A;
   }
 
+  /* ---------- pages (separate scratchpads) ---------- */
+  const PAGES_KEY = 'matrix-scratchpad-pages';
+  let pages = { current: 'p1', list: [{ id: 'p1', name: 'Page 1' }] };
+  const keyFor = (id) => (id === 'p1' ? 'matrix-scratchpad-v1' : 'matrix-scratchpad-p-' + id);
+  function loadPages() { try { const p = JSON.parse(localStorage.getItem(PAGES_KEY) || 'null'); if (p && p.list && p.list.length) pages = p; } catch (e) { /* ignore */ } }
+  function savePages() { try { localStorage.setItem(PAGES_KEY, JSON.stringify(pages)); } catch (e) { /* ignore */ } }
+  App.switchPage = function (id) {
+    if (id === pages.current) return;
+    Ed.commit(); Ed.saveNow(); Ed.closePopover();
+    pages.current = id; Ed.storeKey = keyFor(id); savePages();
+    if (!Ed.restore()) Ed.load({ items: [], seq: 1, view: { x: 40, y: 40, z: 1 } });
+    Ed.applyView(); renderTabs(); syncSelbar(); Ed.emit('change');
+    const pg = pages.list.find((p) => p.id === id); Ed.toast('Switched to ' + (pg ? pg.name : 'page'));
+  };
+  App.newPage = function () {
+    const id = 'p' + Date.now().toString(36);
+    let k = pages.list.length + 1; while (pages.list.some((p) => p.name === 'Page ' + k)) k++;
+    pages.list.push({ id, name: 'Page ' + k }); savePages();
+    App.switchPage(id);
+  };
+  function renamePage(pg) { const v = prompt('Rename page', pg.name); if (v && v.trim()) { pg.name = v.trim().slice(0, 40); savePages(); renderTabs(); } }
+  function deletePage(pg) {
+    if (pages.list.length < 2) return;
+    if (!confirm(`Delete "${pg.name}" and everything on it?`)) return;
+    const i = pages.list.indexOf(pg);
+    if (pg.id === pages.current) App.switchPage(pages.list[i ? i - 1 : 1].id);
+    pages.list.splice(i, 1); try { localStorage.removeItem(keyFor(pg.id)); } catch (e) { /* ignore */ }
+    savePages(); renderTabs();
+  }
+  function renderTabs() {
+    const bar = $('pages'); if (!bar) return;
+    bar.innerHTML = '';
+    pages.list.forEach((pg) => {
+      const tab = el('div', { class: 'page-tab' + (pg.id === pages.current ? ' on' : ''), title: 'Double-click to rename' },
+        el('span', { class: 'page-name', onclick: () => App.switchPage(pg.id), ondblclick: () => renamePage(pg) }, pg.name),
+        pages.list.length > 1 ? el('button', { class: 'page-x', title: 'Delete page', onclick: (e) => { e.stopPropagation(); deletePage(pg); } }, '×') : null);
+      bar.append(tab);
+    });
+    bar.append(el('button', { class: 'page-add', title: 'New page', onclick: App.newPage }, '+'));
+  }
+
   function boot() {
     loadPrefs();
     Ed.init($('stage'), $('world'));
     MX.Draw.init();
     X.init();
-    if (!Ed.restore()) seed();
+    loadPages();
+    Ed.storeKey = keyFor(pages.current);
+    if (!Ed.restore()) { if (pages.current === 'p1') seed(); else Ed.load({ items: [], seq: 1, view: { x: 40, y: 40, z: 1 } }); }
+    renderTabs();
     Ed.applyView();
     Ed.on('selection', syncSelbar);
     Ed.on('change', syncSelbar);

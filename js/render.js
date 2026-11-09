@@ -53,7 +53,10 @@
       if (it.kind === 'matrix') box.append(MX.renderMatrix(it.M, {}, it.label));
       else if (it.kind === 'scalar') box.append(el('div', { class: 'res-scalar' }, el('span', { class: 'res-lbl' }, (it.label || '') + ' = '), MX.fmt(it.v)));
       else box.append(el('pre', { class: 'res-text' }, it.text));
-      if (onInsert) box.append(el('button', { class: 'tb small', title: 'Add to the workspace', onclick: () => onInsert(it) }, '＋ to scratchpad'));
+      const acts = el('div', { class: 'res-actions' });
+      if (MX.App && MX.App.copyResult) acts.append(el('button', { class: 'tb small', title: 'Copy this answer (uses your copy format, e.g. @MATX)', onclick: () => MX.App.copyResult(it) }, '⎘ Copy'));
+      if (onInsert) acts.append(el('button', { class: 'tb small', title: 'Add to the workspace', onclick: () => onInsert(it) }, '＋ to scratchpad'));
+      box.append(acts);
       wrap.append(box);
     }
     return wrap;

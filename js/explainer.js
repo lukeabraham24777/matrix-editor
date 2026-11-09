@@ -22,6 +22,7 @@
     document.getElementById('ex-steps').addEventListener('click', () => X.run('steps'));
     document.getElementById('ex-answer').addEventListener('click', () => X.run('answer'));
     document.getElementById('ex-close').addEventListener('click', X.close);
+    document.getElementById('ex-hist').addEventListener('click', () => X.showHistory());
     document.getElementById('ex-wide').addEventListener('click', () => { panel.classList.toggle('wide'); panel.style.width = ''; document.documentElement.style.setProperty('--exw', panel.classList.contains('wide') ? Math.min(980, window.innerWidth - 120) + 'px' : '460px'); });
     // resize
     const rz = document.getElementById('ex-resize');
@@ -41,6 +42,48 @@
     buildForm();
     clearOut();
   };
+  /* ---------- history ---------- */
+  const HIST_KEY = 'matrix-scratchpad-explainer-history';
+  X.history = [];
+  try { X.history = JSON.parse(localStorage.getItem(HIST_KEY) || '[]'); } catch (e) { X.history = []; }
+  const saveHist = () => { try { localStorage.setItem(HIST_KEY, JSON.stringify(X.history.slice(0, 50))); } catch (e) { /* ignore */ } };
+  const matText = (A) => A.map((r) => r.map((x) => MX.fmt(x, 'frac')).join(' ')).join('\n');
+  function record(args, names) {
+    const op = MX.ops[X.op];
+    const entry = {
+      op: X.op, opts: Object.assign({}, X.opts), mode: X.mode, t: Date.now(),
+      inputs: op.inputs.map((inp, i) => ((inp.kind || 'matrix') === 'matrix' ? { text: matText(args[i]), name: names[i] } : { value: String(names[i]) })),
+      ok: !X.error,
+    };
+    const key = JSON.stringify([entry.op, entry.opts, entry.inputs]);
+    X.history = [entry].concat(X.history.filter((h) => JSON.stringify([h.op, h.opts, h.inputs]) !== key)).slice(0, 50);
+    saveHist();
+  }
+  const ago = (t) => { const s = (Date.now() - t) / 1000; return s < 60 ? 'just now' : s < 3600 ? Math.round(s / 60) + ' min ago' : s < 86400 ? Math.round(s / 3600) + ' h ago' : Math.round(s / 86400) + ' d ago'; };
+  X.showHistory = function () {
+    out.innerHTML = '';
+    const head = el('div', { class: 'ex-hist-head' }, el('div', { class: 'ex-empty-title' }, 'History'), el('span', { class: 'spacer' }),
+      X.history.length ? el('button', { class: 'tb small', onclick: () => { if (confirm('Clear the explainer history?')) { X.history = []; saveHist(); X.showHistory(); } } }, 'Clear') : null);
+    out.append(head);
+    if (!X.history.length) { out.append(el('p', { class: 'muted' }, 'Nothing yet — every operation you run here is saved so you can come back to it.')); return; }
+    const list = el('div', { class: 'ex-hist' });
+    X.history.forEach((h) => {
+      const op = MX.ops[h.op]; if (!op) return;
+      const desc = h.inputs.map((inp, i) => (inp.text != null ? `${inp.name || op.inputs[i].name} = [${inp.text.split('\n').join('; ')}]` : `${op.inputs[i].name} = ${inp.value}`)).join('   ');
+      list.append(el('button', { class: 'ex-hist-item' + (h.ok ? '' : ' err'), title: 'Open this again with its steps', onclick: () => X.restore(h) },
+        el('div', { class: 'ex-hist-top' }, el('b', null, op.name), el('span', { class: 'muted' }, ago(h.t))),
+        el('div', { class: 'ex-hist-desc' }, desc.length > 140 ? desc.slice(0, 140) + '…' : desc)));
+    });
+    out.append(list);
+  };
+  X.restore = function (h) {
+    X.op = h.op; opSel.value = h.op; X.opts = Object.assign({}, h.opts);
+    X.inputs = {};
+    h.inputs.forEach((inp, i) => { X.inputs[i] = inp.text != null ? { text: inp.text } : { value: inp.value }; });
+    buildForm();
+    X.run(h.mode === 'answer' ? 'answer' : 'steps');
+  };
+
   X.isOpen = () => !panel.hidden;
   X.toggle = () => (X.isOpen() ? X.close() : X.open());
   X.open = function (cfg) {
@@ -131,6 +174,8 @@
       const { args, names } = gatherArgs();
       X.names = names;
       r = MX.run(X.op, args, X.opts, true);
+      X.error = r.error || null;
+      record(args, names);
     } catch (e) { r = { error: e.message, steps: [] }; }
     X.steps = r.steps; X.result = r.result || null; X.error = r.error || null;
     X.idx = mode === 'answer' ? X.steps.length - 1 : 0;

@@ -21,7 +21,7 @@
   Ed.emit = (ev, ...a) => (Ed.listeners[ev] || []).forEach((fn) => fn(...a));
 
   /* ---------- state & persistence ---------- */
-  const STORE = 'matrix-scratchpad-v1';
+  Ed.storeKey = 'matrix-scratchpad-v1'; // page 1 keeps the original key; other pages get their own
   Ed.snapshot = () => JSON.stringify({ items: Ed.state.items, seq: Ed.state.seq });
   let lastSnap = null, saveTimer = null, typingTimer = null;
   Ed.commit = function () {
@@ -38,8 +38,14 @@
   Ed.save = function () {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
-      try { localStorage.setItem(STORE, JSON.stringify(Ed.state)); } catch (e) { /* storage unavailable */ }
+      Ed.saveNow();
     }, 200);
+  };
+  let warnedFull = false;
+  Ed.saveNow = function () {
+    clearTimeout(saveTimer);
+    try { localStorage.setItem(Ed.storeKey, JSON.stringify(Ed.state)); }
+    catch (e) { if (!warnedFull) { warnedFull = true; Ed.toast('Browser storage is full — remove big pictures or export your work (⋯ → Export)', true); } }
   };
   Ed.load = function (data) {
     Ed.state.items = (data && data.items) || [];
@@ -47,12 +53,13 @@
     if (data && data.view) Ed.state.view = data.view;
     Ed.state.items.forEach(normalizeItem);
     lastSnap = Ed.snapshot();
+    Ed.undoStack = []; Ed.redoStack = [];
     Ed.sel = [];
     Ed.renderAll();
     Ed.applyView();
   };
   Ed.restore = function () {
-    try { const raw = localStorage.getItem(STORE); if (raw) { Ed.load(JSON.parse(raw)); return true; } } catch (e) { /* ignore */ }
+    try { const raw = localStorage.getItem(Ed.storeKey); if (raw) { Ed.load(JSON.parse(raw)); return true; } } catch (e) { /* ignore */ }
     return false;
   };
   function applySnap(s) {
@@ -347,7 +354,7 @@
       el('span', { class: 'grip', title: 'Drag to move · drop on another matrix to swap places' }, '⠿'),
       el('span', { class: 'sel-badge' }),
       el('input', { class: 'name', value: it.name, 'data-k': 'name', spellcheck: 'false', autocomplete: 'off', size: Math.max(1, it.name.length), title: 'Double-click to rename' }),
-      el('span', { class: 'dims' }, `${m}×${n}`),
+      el('span', { class: 'dims' }, it.aug && n > 1 ? `${m}×${n - 1} | b` : `${m}×${n}`),
       it.caption ? el('span', { class: 'caption', title: it.caption }, it.caption) : null,
       el('span', { class: 'spacer' }),
       el('button', { class: 'hb ops', title: 'Operations on ' + it.name }, 'ƒ'),
@@ -365,7 +372,7 @@
       put(el('div', { class: 'rh' + (rowOn ? ' on' : ''), 'data-row': i, title: `Row ${i + 1}: tap for row operations, drag to reorder` }, 'R' + (i + 1)), i + 2, 1);
       for (let j = 0; j < n; j++) {
         const on = rowOn || lsOn('col', j);
-        put(el('input', { class: 'cell' + (on ? ' line-on' : '') + (validCell(it.cells[i][j]) ? '' : ' bad'), value: it.cells[i][j], placeholder: '0', 'data-r': i, 'data-c': j, 'data-k': `c${i}_${j}`, inputmode: 'text', autocomplete: 'off', spellcheck: 'false', enterkeyhint: 'next' }), i + 2, j + 2);
+        put(el('input', { class: 'cell' + (on ? ' line-on' : '') + (validCell(it.cells[i][j]) ? '' : ' bad') + (it.aug && n > 1 && j === n - 1 ? ' aug-col' : ''), value: it.cells[i][j], placeholder: '0', 'data-r': i, 'data-c': j, 'data-k': `c${i}_${j}`, inputmode: 'text', autocomplete: 'off', spellcheck: 'false', enterkeyhint: 'next' }), i + 2, j + 2);
       }
       TC.forEach((t, k) => put(el('input', { class: 'cell tmp', value: t.cells[i] || '', placeholder: '·', 'data-tc': k, 'data-r': i, 'data-k': `tc${k}_${i}`, autocomplete: 'off', spellcheck: 'false' }), i + 2, n + 2 + k));
     }
