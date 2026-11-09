@@ -52,7 +52,7 @@
     // homework-site format @MATX{{1,2};{3,4}}
     const mx = /^@MATX\s*\{(.*)\}$/s.exec(t);
     if (mx) {
-      const rows = mx[1].split(/\}\s*;\s*\{/).map((r) => r.replace(/^\s*\{|\}\s*$/g, '').split(',').map((c) => c.trim()));
+      const rows = mx[1].split(/\}\s*[;,]\s*\{/).map((r) => r.replace(/^\s*\{|\}\s*$/g, '').split(/[;,]/).map((c) => c.trim()));
       return normalize(rows);
     }
     // LaTeX
@@ -95,7 +95,7 @@
   M.toText = (A, sep = '\t') => A.map((r) => r.map((x) => MX.fmt(x)).join(sep)).join('\n');
   M.toLatex = (A) => '\\begin{bmatrix}\n' + A.map((r) => r.map((x) => (x instanceof Frac ? x.toLatex() : MX.fmt(x))).join(' & ')).join(' \\\\\n') + '\n\\end{bmatrix}';
   M.toPython = (A) => '[' + A.map((r) => '[' + r.map((x) => (x instanceof Frac && !x.isInt() ? x.toNumber() : MX.fmt(x))).join(', ') + ']').join(', ') + ']';
-  /** Homework-site format: @MATX{{1,2};{3,4}} (rows in braces separated by ';', entries by ','). */
-  M.toMATX = (A) => '@MATX{' + A.map((r) => '{' + r.map((x) => MX.fmt(x, 'frac')).join(',') + '}').join(';') + '}';
+  /** Homework-site format: @MATX{{1;2};{3;4}} (each row in braces; entries and rows separated by ';'). */
+  M.toMATX = (A) => '@MATX{' + A.map((r) => '{' + r.map((x) => MX.fmt(x, 'frac')).join(';') + '}').join(';') + '}';
   M.toMatlab = (A) => '[' + A.map((r) => r.map((x) => MX.fmt(x)).join(' ')).join('; ') + ']';
 })(typeof window !== 'undefined' ? window : globalThis);

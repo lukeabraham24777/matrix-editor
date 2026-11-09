@@ -112,8 +112,10 @@ test('solve augmented matrix [A | b]', () => {
 });
 test('@MATX homework format', () => {
   assert.equal(M.toMATX(P('6\n0')), '@MATX{{6};{0}}');
-  assert.equal(M.toMATX(P('2 1 -3\n0 6 3')), '@MATX{{2,1,-3};{0,6,3}}');
-  assert.equal(M.toMATX(P('1/2 0.25')), '@MATX{{1/2,1/4}}');
+  assert.equal(M.toMATX(P('2 1 -3\n0 6 3')), '@MATX{{2;1;-3};{0;6;3}}');
+  assert.equal(M.toMATX(P('1 2\n3 4')), '@MATX{{1;2};{3;4}}');
+  assert.equal(M.toMATX(P('1/2 0.25')), '@MATX{{1/2;1/4}}');
+  assert.deepEqual(M.parseText('@MATX{{1;2};{3;4}}'), [['1', '2'], ['3', '4']]);
   assert.deepEqual(M.parseText('@MATX{{2,1,-3};{0,6,3}}'), [['2', '1', '-3'], ['0', '6', '3']]);
   assert.deepEqual(M.parseText('@MATX{{6};{0}}'), [['6'], ['0']]);
 });
