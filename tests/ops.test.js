@@ -110,3 +110,10 @@ test('solve augmented matrix [A | b]', () => {
   assert.equal(run('solveaug', [P('1 1 1\n1 1 2')]).kind, 'text');
   assert.equal(T(MX.evaluate('solveaug([1 0 5; 0 1 7])', () => undefined)), '5\n7');
 });
+test('@MATX homework format', () => {
+  assert.equal(M.toMATX(P('6\n0')), '@MATX{{6};{0}}');
+  assert.equal(M.toMATX(P('2 1 -3\n0 6 3')), '@MATX{{2,1,-3};{0,6,3}}');
+  assert.equal(M.toMATX(P('1/2 0.25')), '@MATX{{1/2,1/4}}');
+  assert.deepEqual(M.parseText('@MATX{{2,1,-3};{0,6,3}}'), [['2', '1', '-3'], ['0', '6', '3']]);
+  assert.deepEqual(M.parseText('@MATX{{6};{0}}'), [['6'], ['0']]);
+});

@@ -190,7 +190,8 @@
       item('⧉  Duplicate', () => duplicate([it.id]));
       sep('Copy as');
       const A = () => Ed.matrixOf(it);
-      item('Plain text / spreadsheet', () => { copyItems([it.id]); copyText(M.toText(A()), 'as text'); });
+      item('@MATX  (homework sites)', () => copyText(M.toMATX(A()), 'as @MATX'));
+      item('Plain text / spreadsheet', () => copyText(M.toText(A()), 'as text'));
       item('LaTeX (bmatrix)', () => copyText(M.toLatex(A()), 'LaTeX'));
       item('Python / NumPy list', () => copyText(M.toPython(A()), 'Python'));
       item('MATLAB', () => copyText(M.toMatlab(A()), 'MATLAB'));
@@ -215,11 +216,18 @@
 
   /* ---------- clipboard (items) ---------- */
   let clip = null; // { text, items }
+  const COPY_FORMATS = { matx: ['@MATX (homework sites)', (A) => M.toMATX(A)], text: ['Plain text / spreadsheet', (A) => M.toText(A)], latex: ['LaTeX', (A) => M.toLatex(A)], python: ['Python / NumPy', (A) => M.toPython(A)], matlab: ['MATLAB', (A) => M.toMatlab(A)] };
+  App.copyFormat = 'matx';
+  /** Text for one matrix in the chosen copy format (falls back to raw cells if an entry is invalid). */
+  function matrixText(it, fmt) {
+    try { return COPY_FORMATS[fmt || App.copyFormat][1](Ed.matrixOf(it)); }
+    catch (e) { return it.cells.map((r) => r.map((s) => s || '0').join('\t')).join('\n'); }
+  }
   function copyItems(ids) {
     const items = ids.map((id) => Ed.get(id)).filter(Boolean).map((i) => JSON.parse(JSON.stringify(i)));
     if (!items.length) return null;
-    const text = items.length === 1 && items[0].kind === 'matrix' ? items[0].cells.map((r) => r.map((s) => s || '0').join('\t')).join('\n')
-      : items.map((i) => (i.kind === 'matrix' ? `${i.name} =\n` + i.cells.map((r) => r.map((s) => s || '0').join('\t')).join('\n') : i.text || '')).filter(Boolean).join('\n\n') || `[${items.length} drawing item${items.length > 1 ? 's' : ''}]`;
+    const text = items.length === 1 && items[0].kind === 'matrix' ? matrixText(Ed.get(items[0].id))
+      : items.map((i) => (i.kind === 'matrix' ? `${i.name} = ` + matrixText(Ed.get(i.id)) : i.text || '')).filter(Boolean).join('\n\n') || `[${items.length} drawing item${items.length > 1 ? 's' : ''}]`;
     clip = { text, items };
     return text;
   }
@@ -466,6 +474,8 @@
     item('📋  Matrix from clipboard (image or text)', () => App.readClipboard());
     item('🖼  Insert a picture…', () => MX.Draw.pickImage());
     item('⤢  Fit everything in view', Ed.fit);
+    sep('Ctrl+C copies matrices as');
+    Object.entries(COPY_FORMATS).forEach(([k, [label]]) => item((App.copyFormat === k ? '● ' : '○ ') + label, () => { App.copyFormat = k; savePrefs(); Ed.toast('Ctrl+C now copies matrices as ' + label); }));
     sep('Display');
     item((MX.settings.display === 'frac' ? '● ' : '○ ') + 'Fractions', () => setDisplay('frac'));
     item((MX.settings.display === 'dec' ? '● ' : '○ ') + 'Decimals', () => setDisplay('dec'));
@@ -485,8 +495,8 @@
     root.dataset.theme = dark ? 'dark' : 'light';
     savePrefs();
   }
-  function savePrefs() { try { localStorage.setItem('matrix-scratchpad-prefs', JSON.stringify({ display: MX.settings.display, theme: document.documentElement.dataset.theme || '' })); } catch (e) { /* ignore */ } }
-  function loadPrefs() { try { const p = JSON.parse(localStorage.getItem('matrix-scratchpad-prefs') || '{}'); if (p.display) MX.settings.display = p.display; if (p.theme) document.documentElement.dataset.theme = p.theme; } catch (e) { /* ignore */ } }
+  function savePrefs() { try { localStorage.setItem('matrix-scratchpad-prefs', JSON.stringify({ display: MX.settings.display, theme: document.documentElement.dataset.theme || '', copy: App.copyFormat })); } catch (e) { /* ignore */ } }
+  function loadPrefs() { try { const p = JSON.parse(localStorage.getItem('matrix-scratchpad-prefs') || '{}'); if (p.display) MX.settings.display = p.display; if (p.theme) document.documentElement.dataset.theme = p.theme; if (p.copy && COPY_FORMATS[p.copy]) App.copyFormat = p.copy; } catch (e) { /* ignore */ } }
   function exportJSON() {
     const blob = new Blob([JSON.stringify({ app: 'matrix-scratchpad', version: 1, items: Ed.state.items, seq: Ed.state.seq }, null, 1)], { type: 'application/json' });
     const a = el('a', { href: URL.createObjectURL(blob), download: 'matrix-scratchpad.json' });
@@ -593,7 +603,7 @@
     document.addEventListener('copy', (e) => {
       if (typing(e.target) || !Ed.sel.length || (window.getSelection() && String(window.getSelection()))) return;
       const t = copyItems(Ed.sel); if (t == null) return;
-      e.clipboardData.setData('text/plain', t); e.preventDefault(); Ed.toast('Copied');
+      e.clipboardData.setData('text/plain', t); e.preventDefault(); Ed.toast(Ed.sel.length === 1 && Ed.get(Ed.sel[0]).kind === 'matrix' ? 'Copied ' + t.slice(0, 60) : 'Copied');
     });
     document.addEventListener('cut', (e) => {
       if (typing(e.target) || !Ed.sel.length) return;
