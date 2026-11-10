@@ -119,3 +119,13 @@ test('@MATX homework format', () => {
   assert.deepEqual(M.parseText('@MATX{{2,1,-3};{0,6,3}}'), [['2', '1', '-3'], ['0', '6', '3']]);
   assert.deepEqual(M.parseText('@MATX{{6};{0}}'), [['6'], ['0']]);
 });
+test('parametric solutions expose free-variable data for plugging in values', () => {
+  const r = run('solveaug', [P('1 0 0 -476/365 0\n0 1 0 -601/730 0\n0 0 1 -1881/730 0\n0 0 0 0 0')]);
+  assert.deepEqual(r.param.names, ['s']);
+  assert.deepEqual(r.param.free, [3]);
+  // s = 730 gives whole numbers
+  const x = r.param.xp.map((v, i) => v.add(r.param.basis[0][i].mul(new Frac(730))));
+  assert.deepEqual(x.map(String), ['952', '601', '1881', '730']);
+  const n = run('null', [P('1 2 3\n2 4 6')]);
+  assert.deepEqual(n.param.names, ['s', 't']);
+});

@@ -44,6 +44,48 @@
     return fig;
   };
 
+  /**
+   * "Plug in values": pick numbers for the free parameters and see the resulting solution.
+   * param: { names, free, xp, basis, A, b } (Frac arrays)
+   */
+  MX.renderPlugIn = function (param, onInsert) {
+    const { Frac } = MX;
+    const n = param.xp.length;
+    const box = el('div', { class: 'plugin' });
+    const inputs = param.names.map((nm, t) => el('input', { class: 'plugin-in', value: t === 0 ? '1' : '0', 'aria-label': nm, inputmode: 'text', autocomplete: 'off', spellcheck: 'false' }));
+    const out = el('div', { class: 'plugin-out' });
+    const msg = el('div', { class: 'plugin-msg' });
+    let current = null;
+    const compute = () => {
+      out.innerHTML = ''; msg.textContent = ''; msg.className = 'plugin-msg'; current = null;
+      let vals;
+      try { vals = inputs.map((i, t) => { try { return Frac.parse(i.value.trim() || '0'); } catch (e) { throw new Error(`"${i.value}" is not a number (${param.names[t]})`); } }); }
+      catch (e) { msg.textContent = e.message; msg.classList.add('err'); return; }
+      const x = param.xp.slice();
+      vals.forEach((v, t) => { param.basis[t].forEach((bi, i) => { x[i] = x[i].add(v.mul(bi)); }); });
+      current = x;
+      const lines = x.map((xi, i) => {
+        const fi = param.free.indexOf(i);
+        return el('div', { class: 'plugin-line' + (fi >= 0 ? ' free' : '') }, `x${MX.sub(i + 1)} = ${MX.fmt(xi)}`, fi >= 0 ? el('span', { class: 'muted' }, `  (= ${param.names[fi]})`) : null);
+      });
+      out.append(el('div', { class: 'plugin-lines' }, lines), MX.renderMatrix(x.map((v) => [v]), {}, 'x'));
+      // verify A x = b
+      const ok = param.A.every((row, i) => row.reduce((s, a, j) => s.add(a.mul(x[j])), Frac.ZERO).eq(param.b[i]));
+      msg.textContent = ok ? '✓ This x satisfies every equation (Ax = b)' : '✗ check failed';
+      msg.classList.add(ok ? 'ok' : 'err');
+    };
+    inputs.forEach((i) => i.addEventListener('input', compute));
+    const acts = el('div', { class: 'res-actions' });
+    if (MX.App && MX.App.copyResult) acts.append(el('button', { class: 'tb small', onclick: () => current && MX.App.copyResult({ kind: 'matrix', M: current.map((v) => [v]) }) }, '⎘ Copy x'));
+    if (onInsert) acts.append(el('button', { class: 'tb small', onclick: () => current && onInsert({ kind: 'matrix', label: 'x', M: current.map((v) => [v]) }) }, '＋ to scratchpad'));
+    box.append(
+      el('div', { class: 'plugin-title' }, 'Plug in values for the free variable' + (param.names.length > 1 ? 's' : '')),
+      el('div', { class: 'plugin-row' }, param.names.map((nm, t) => el('label', { class: 'plugin-param' }, el('span', null, `${nm} = `), inputs[t], el('span', { class: 'muted' }, ` (x${MX.sub(param.free[t] + 1)})`)))),
+      out, msg, acts);
+    compute();
+    return box;
+  };
+
   /** Render an operation result (matrix/scalar/text/multi). onInsert(item) adds it to the workspace. */
   MX.renderResult = function (res, onInsert) {
     const wrap = el('div', { class: 'result' });
@@ -59,6 +101,7 @@
       box.append(acts);
       wrap.append(box);
     }
+    if (res.param && res.param.names.length) wrap.append(MX.renderPlugIn(res.param, onInsert));
     return wrap;
   };
 })(window);

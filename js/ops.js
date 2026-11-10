@@ -351,7 +351,8 @@
     S.add('Infinitely many solutions', { text: `Pivot columns: ${pcols.map((c) => c + 1).join(', ')}. Column${free.length > 1 ? 's' : ''} ${free.map((c) => c + 1).join(', ')} ${free.length > 1 ? 'have' : 'has'} no pivot, so x${free.map((c) => sub(c + 1)).join(', x')} ${free.length > 1 ? 'are free variables' : 'is a free variable'}. Solve each pivot variable in terms of the free ones:`, eq: lines.join('\n'), mats: [snap('RREF', R, { aug: n, pivots: g.pivots })] });
     const vec = `x = xₚ + ${free.map((_, t) => pname(t) + '·v' + sub(t + 1)).join(' + ')}`;
     S.add('Vector (parametric) form', { text: 'Split the solution into a particular solution plus a combination of null-space vectors:', eq: vec, mats: [snap('xₚ', xp)].concat(basis.map((v, t) => snap('v' + sub(t + 1), v))) });
-    return { kind: 'multi', items: [{ kind: 'text', label: 'General solution', text: vec + '\n' + lines.join('\n') }, { kind: 'matrix', label: 'xp', M: xp }].concat(basis.map((v, t) => ({ kind: 'matrix', label: 'v' + (t + 1), M: v }))) };
+    const param = { names: free.map((_, t) => pname(t)), free, xp: xp.map((r) => r[0]), basis: basis.map((v) => v.map((r) => r[0])), A, b: b.map((r) => r[0]) };
+    return { kind: 'multi', param, items: [{ kind: 'text', label: 'General solution', text: vec + '\n' + lines.join('\n') }, { kind: 'matrix', label: 'xp', M: xp }].concat(basis.map((v, t) => ({ kind: 'matrix', label: 'v' + (t + 1), M: v }))) };
   }
   def('solve', {
     name: 'Solve Ax = b', short: 'Ax=b', group: 'Row reduction', inputs: [{ name: 'A' }, { name: 'b', hint: 'column vector' }],
@@ -510,7 +511,9 @@
       S.add('One basis vector per free variable', { text: `Free variables: x${free.map((c) => sub(c + 1)).join(', x')}. For each, set it to 1 and the other free variables to 0; the pivot variables are the negatives of the entries in that column of the RREF.`, mats: [snap('RREF', g.M, { pivots: g.pivots, cols: free })].concat(basis.map((v, t) => snap('v' + sub(t + 1), v))) });
       let Bm = basis[0]; for (let t = 1; t < basis.length; t++) Bm = M.hstack(Bm, basis[t]);
       S.add('Basis', { text: `Null(A) = span{${basis.map((_, t) => 'v' + sub(t + 1)).join(', ')}}, dimension (nullity) ${basis.length}.`, mats: [snap('basis (as columns)', Bm)] });
-      return { kind: 'matrix', M: Bm, label: 'N' };
+      const params = 'stuvwpqrabcdefgh'.split('');
+      const param = { names: free.map((_, t) => (free.length <= params.length ? params[t] : 't' + sub(t + 1))), free, xp: Array.from({ length: n }, () => ZERO), basis: basis.map((v) => v.map((r) => r[0])), A, b: A.map(() => ZERO) };
+      return { kind: 'matrix', M: Bm, label: 'N', param };
     },
   });
   def('colspace', {

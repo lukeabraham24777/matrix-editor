@@ -479,3 +479,17 @@ body.ex-open .pages { max-width: 20vw; }
 .ex-hist-item.err { border-left: 3px solid var(--pen); }
 .ex-hist-top { display: flex; justify-content: space-between; gap: 8px; font-size: 14px; }
 .ex-hist-desc { font-family: var(--hand); font-size: 14px; color: var(--ink-soft); margin-top: 2px; overflow-wrap: anywhere; }
+
+/* plug-in values for free variables */
+.plugin { flex-basis: 100%; margin-top: 6px; padding: 10px 12px; border: 1.5px dashed var(--pen); border-radius: 12px; background: var(--pen-soft); }
+.plugin-title { font-family: var(--script); font-size: 22px; font-weight: 700; color: var(--pen); }
+.plugin-row { display: flex; flex-wrap: wrap; gap: 10px 16px; margin: 6px 0; }
+.plugin-param { display: inline-flex; align-items: center; font-family: var(--hand); font-size: 17px; }
+.plugin-in { width: 74px; height: 32px; border: 1px solid var(--border); border-radius: 7px; background: var(--paper-2); padding: 0 8px; font-family: var(--hand); font-size: 17px; outline: none; }
+.plugin-in:focus { border-color: var(--blue); }
+.plugin-out { display: flex; flex-wrap: wrap; gap: 8px 22px; align-items: center; margin: 4px 0; }
+.plugin-lines { font-family: var(--hand); font-size: 16px; line-height: 1.5; }
+.plugin-line.free { color: var(--blue); }
+.plugin-msg { font-size: 13px; margin: 4px 0 6px; }
+.plugin-msg.ok { color: #2f9e44; }
+.plugin-msg.err { color: var(--pen); }
