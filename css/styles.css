@@ -493,3 +493,8 @@ body.ex-open .pages { max-width: 20vw; }
 .plugin-msg { font-size: 13px; margin: 4px 0 6px; }
 .plugin-msg.ok { color: #2f9e44; }
 .plugin-msg.err { color: var(--pen); }
+
+/* fraction / decimal toggle */
+.tb.disp { gap: 5px; padding: 0 10px; font-family: var(--hand); }
+.tb.disp .disp-on { font-weight: 700; color: var(--ink); font-size: 16px; }
+.tb.disp .disp-off { color: var(--ink-faint); font-size: 12px; }

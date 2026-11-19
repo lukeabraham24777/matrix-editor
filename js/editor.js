@@ -333,12 +333,18 @@
   };
   Ed.refresh = function (it) { if (it.kind === 'matrix') Ed.recomputeTemps(it); return Ed.renderItem(it); };
 
+  /** What a cell shows when not being edited: decimals in decimal mode, otherwise what was typed. */
+  Ed.showCell = function (s) {
+    if (MX.settings.display !== 'dec' || s == null || String(s).trim() === '') return s || '';
+    const f = Frac.tryParse(s);
+    return f && !f.isInt() ? f.toDecimal(MX.settings.digits) : s;
+  };
   const textW = (s) => Math.max(38, Math.ceil(String(s || '').length * 9.6 + 20));
   function colWidths(it) {
     const [m, n] = Ed.dims(it);
     const w = [];
-    for (let j = 0; j < n; j++) { let mx = 1; for (let i = 0; i < m; i++) mx = Math.max(mx, (it.cells[i][j] || '').length); it.tmpRows.forEach((t) => { mx = Math.max(mx, (t.cells[j] || '').length); }); w.push(textW('x'.repeat(mx))); }
-    it.tmpCols.forEach((t) => { let mx = Math.max(2, (t.expr || '').length * 0.6); t.cells.forEach((c) => { mx = Math.max(mx, (c || '').length); }); w.push(textW('x'.repeat(mx))); });
+    for (let j = 0; j < n; j++) { let mx = 1; for (let i = 0; i < m; i++) mx = Math.max(mx, Ed.showCell(it.cells[i][j]).length); it.tmpRows.forEach((t) => { mx = Math.max(mx, Ed.showCell(t.cells[j]).length); }); w.push(textW('x'.repeat(mx))); }
+    it.tmpCols.forEach((t) => { let mx = Math.max(2, (t.expr || '').length * 0.6); t.cells.forEach((c) => { mx = Math.max(mx, Ed.showCell(c).length); }); w.push(textW('x'.repeat(mx))); });
     return w;
   }
   function applyWidths(it, grid) {
@@ -372,14 +378,14 @@
       put(el('div', { class: 'rh' + (rowOn ? ' on' : ''), 'data-row': i, title: `Row ${i + 1}: tap for row operations, drag to reorder` }, 'R' + (i + 1)), i + 2, 1);
       for (let j = 0; j < n; j++) {
         const on = rowOn || lsOn('col', j);
-        put(el('input', { class: 'cell' + (on ? ' line-on' : '') + (validCell(it.cells[i][j]) ? '' : ' bad') + (it.aug && n > 1 && j === n - 1 ? ' aug-col' : ''), value: it.cells[i][j], placeholder: '0', 'data-r': i, 'data-c': j, 'data-k': `c${i}_${j}`, inputmode: 'text', autocomplete: 'off', spellcheck: 'false', enterkeyhint: 'next' }), i + 2, j + 2);
+        put(el('input', { class: 'cell' + (on ? ' line-on' : '') + (validCell(it.cells[i][j]) ? '' : ' bad') + (it.aug && n > 1 && j === n - 1 ? ' aug-col' : ''), value: Ed.showCell(it.cells[i][j]), placeholder: '0', 'data-r': i, 'data-c': j, 'data-k': `c${i}_${j}`, inputmode: 'text', autocomplete: 'off', spellcheck: 'false', enterkeyhint: 'next' }), i + 2, j + 2);
       }
-      TC.forEach((t, k) => put(el('input', { class: 'cell tmp', value: t.cells[i] || '', placeholder: '·', 'data-tc': k, 'data-r': i, 'data-k': `tc${k}_${i}`, autocomplete: 'off', spellcheck: 'false' }), i + 2, n + 2 + k));
+      TC.forEach((t, k) => put(el('input', { class: 'cell tmp', value: Ed.showCell(t.cells[i]), placeholder: '·', 'data-tc': k, 'data-r': i, 'data-k': `tc${k}_${i}`, autocomplete: 'off', spellcheck: 'false' }), i + 2, n + 2 + k));
     }
     TR.forEach((t, k) => {
       const r = m + 2 + k;
       put(el('div', { class: 'rh tmp' + (t.err ? ' err' : '') + (ls && ls.type === 'trow' && ls.idx === k ? ' on' : ''), 'data-trow': k, title: (t.expr ? 'T' + (k + 1) + ' = ' + t.expr : 'Temporary row T' + (k + 1)) + (t.err ? '\n⚠ ' + t.err : '') }, 'T' + (k + 1)), r, 1);
-      for (let j = 0; j < n; j++) put(el('input', { class: 'cell tmp' + (k === 0 ? ' first' : ''), value: t.cells[j] || '', placeholder: '·', 'data-tr': k, 'data-c': j, 'data-k': `tr${k}_${j}`, autocomplete: 'off', spellcheck: 'false' }), r, j + 2);
+      for (let j = 0; j < n; j++) put(el('input', { class: 'cell tmp' + (k === 0 ? ' first' : ''), value: Ed.showCell(t.cells[j]), placeholder: '·', 'data-tr': k, 'data-c': j, 'data-k': `tr${k}_${j}`, autocomplete: 'off', spellcheck: 'false' }), r, j + 2);
     });
     put(el('div', { class: 'br br-l' }), `2 / span ${m}`, 2);
     put(el('div', { class: 'br br-r' }), `2 / span ${m}`, n + 1);
@@ -467,6 +473,7 @@
         try { const x = Frac.parse(v); t.value = x.toString(); t.dispatchEvent(new Event('input', { bubbles: true })); }
         catch (e) { t.classList.add('bad'); t.title = 'Not a number: ' + e.message; }
       }
+      if (MX.settings.display === 'dec' && t.isConnected && !t.classList.contains('bad')) t.value = Ed.showCell(rawOf(t));
       Ed.commit();
     });
     grid.addEventListener('keydown', (ev) => cellKeys(ev, it, card));
@@ -482,7 +489,12 @@
       P.forEach((row, i) => row.forEach((s, j) => { it.cells[r0 + i][c0 + j] = s; }));
       Ed.refresh(it); Ed.commit(); Ed.toast(`Pasted ${P.length}×${P[0].length} block`);
     });
-    grid.addEventListener('focusin', (ev) => { if (ev.target.classList.contains('cell') && !Ed.sel.includes(it.id)) Ed.select(it.id); });
+    const rawOf = (t) => { const d = t.dataset; return d.tr != null ? it.tmpRows[+d.tr].cells[+d.c] || '' : d.tc != null ? it.tmpCols[+d.tc].cells[+d.r] || '' : it.cells[+d.r][+d.c] || ''; };
+    grid.addEventListener('focusin', (ev) => {
+      const t = ev.target; if (!t.classList.contains('cell')) return;
+      if (!Ed.sel.includes(it.id)) Ed.select(it.id);
+      if (MX.settings.display === 'dec' && t.value !== rawOf(t)) { t.value = rawOf(t); t.select(); }
+    });
 
     // line handles
     grid.addEventListener('pointerdown', (ev) => {
@@ -506,8 +518,8 @@
   function updateTempCells(card, it) {
     card.querySelectorAll('.cell.tmp').forEach((inp) => {
       const d = inp.dataset;
-      if (d.tr != null && it.tmpRows[+d.tr].expr) inp.value = it.tmpRows[+d.tr].cells[+d.c] || '';
-      if (d.tc != null && it.tmpCols[+d.tc].expr) inp.value = it.tmpCols[+d.tc].cells[+d.r] || '';
+      if (d.tr != null && it.tmpRows[+d.tr].expr && inp !== document.activeElement) inp.value = Ed.showCell(it.tmpRows[+d.tr].cells[+d.c]);
+      if (d.tc != null && it.tmpCols[+d.tc].expr && inp !== document.activeElement) inp.value = Ed.showCell(it.tmpCols[+d.tc].cells[+d.r]);
     });
     card.querySelectorAll('.rh.tmp, .ch.tmp').forEach((h) => {
       const t = h.dataset.trow != null ? it.tmpRows[+h.dataset.trow] : it.tmpCols[+h.dataset.tcol];

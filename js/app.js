@@ -512,7 +512,19 @@
     item('?  Help & shortcuts', App.help);
     Ed.showPopover(anchor, box);
   }
-  function setDisplay(mode) { MX.settings.display = mode; savePrefs(); if (X.isOpen() && X.steps.length) X.run(X.mode || 'steps'); Ed.toast(mode === 'frac' ? 'Showing exact fractions in explanations' : 'Showing decimals in explanations'); }
+  function setDisplay(mode) {
+    MX.settings.display = mode; savePrefs();
+    Ed.renderAll(); syncSelbar(); syncDisplayBtn();
+    if (X.isOpen() && (X.steps.length || X.result)) X.run(X.mode || 'steps');
+    Ed.toast(mode === 'frac' ? 'Showing exact fractions' : 'Showing decimals (click a cell to see its exact value)');
+  }
+  App.setDisplay = setDisplay;
+  function syncDisplayBtn() {
+    const b = $('btn-display'); if (!b) return;
+    const dec = MX.settings.display === 'dec';
+    b.innerHTML = dec ? '<span class="disp-on">0.5</span><span class="disp-off">½</span>' : '<span class="disp-on">½</span><span class="disp-off">0.5</span>';
+    b.title = dec ? 'Showing decimals — click for exact fractions' : 'Showing fractions — click for decimals';
+  }
   function toggleTheme() {
     const root = document.documentElement;
     const dark = root.dataset.theme ? root.dataset.theme !== 'dark' : !matchMedia('(prefers-color-scheme: dark)').matches;
@@ -638,6 +650,8 @@
 
     $('btn-new').addEventListener('click', (e) => App.newMatrixPicker(e.currentTarget));
     $('btn-note').addEventListener('click', () => { const p = Ed.freeSpot(null, 200, 80); const it = Ed.addNote({ text: '', x: p.x, y: p.y }); Ed.select(it.id); Ed.els.get(it.id).querySelector('.note-body').focus(); });
+    $('btn-display').addEventListener('click', () => setDisplay(MX.settings.display === 'dec' ? 'frac' : 'dec'));
+    syncDisplayBtn();
     $('btn-undo').addEventListener('click', Ed.undo);
     $('btn-redo').addEventListener('click', Ed.redo);
     $('btn-explain').addEventListener('click', () => {
